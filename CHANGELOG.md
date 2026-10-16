@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
-The first public release, 0.1.0, is expected to contain the following.
+## [0.1.0] - 2026-10-16
+
+The first public release.
 
 ### Added
 
@@ -29,3 +31,6 @@ The first public release, 0.1.0, is expected to contain the following.
 ### Removed
 
 - The data and token migrations from pre-release versions.
+
+[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/fundament-agency/issuemon/releases/tag/v0.1.0
