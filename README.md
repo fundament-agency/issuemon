@@ -145,7 +145,7 @@ Environment variables for tests:
 - `ISSUEMON_HOME`: a different data folder (default `~/.issuemon`)
 - `ISSUEMON_USER_DATA`: a different folder for Electron's own files; without `ISSUEMON_HOME` the data file lives there too
 - `ISSUEMON_TOKEN`: token from the environment; it is not stored
-- `ISSUEMON_E2E=1`: notifications are recorded instead of shown, external links are recorded instead of opened and the daily update check does not run
+- `ISSUEMON_E2E=1`: notifications are recorded instead of shown, external links are recorded instead of opened and the daily update check does not run; the window may be larger than the screen, so the tests get the desktop layout on small displays
 - `ISSUEMON_UPDATE_URL`: a different address for the "latest release" request of the update check (default `https://api.github.com/repos/fundament-agency/issuemon/releases/latest`); the mock Jira answers at `/__releases/latest`, reporting the running version unless a test sets `jira.release`
 - `ISSUEMON_APP`: path to the executable of a built app for `npm run test:e2e` (see above)
 

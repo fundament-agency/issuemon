@@ -37,6 +37,8 @@ test('First run: connect and carry on', { timeout: 120_000 }, async t => {
   delete env.ISSUEMON_TOKEN; // otherwise the token comes from the environment and the app stores nothing
   app = await electron.launch({ executablePath: require('electron'), args: [ROOT], env });
   const page = await app.firstWindow();
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1200, 780)); // CI displays are small: force the desktop layout
+  await page.waitForFunction(() => window.innerWidth > 1100);
   page.on('pageerror', err => console.error('[renderer-error]', err.message));
   page.on('console', msg => { if (msg.type() === 'error' || msg.type() === 'warning') console.error(`[renderer-${msg.type()}]`, msg.text()); });
   t.afterEach(async ctx => {

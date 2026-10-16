@@ -42,6 +42,8 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
   app = await electron.launch({ executablePath: PACKAGED || require('electron'), args: PACKAGED ? [] : [ROOT], env });
 
   const page = await app.firstWindow();
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1200, 780)); // CI displays are small: force the desktop layout
+  await page.waitForFunction(() => window.innerWidth > 1100);
   // Diagnostics: show errors from renderer and main right away
   page.on('pageerror', err => console.error('[renderer-error]', err.message));
   page.on('console', msg => { if (msg.type() === 'error' || msg.type() === 'warning') console.error(`[renderer-${msg.type()}]`, msg.text()); });

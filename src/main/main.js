@@ -73,6 +73,7 @@ function createWindow({ show = true } = {}) {
     height: 780,
     minWidth: 380,
     minHeight: 520,
+    enableLargerThanScreen: E2E, // macOS clamps a window to the display; the e2e forces 1200 px wide even on a small CI display
     show: false,
     title: 'IssueMon',
     icon: path.join(ASSETS, 'icon.png'),
