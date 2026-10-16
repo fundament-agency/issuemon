@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-16
+
+### Changed
+
+- Installing or upgrading with Homebrew no longer needs *Open Anyway*: the cask removes the quarantine flag from the app. Only the `.dmg` still asks once.
+- A shorter README, with every behaviour, path and shortcut kept.
+
 ## [0.1.0] - 2026-10-16
 
 The first public release.
@@ -32,5 +39,6 @@ The first public release.
 
 - The data and token migrations from pre-release versions.
 
-[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/fundament-agency/issuemon/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/fundament-agency/issuemon/releases/tag/v0.1.0
