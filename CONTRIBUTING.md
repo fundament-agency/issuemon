@@ -46,7 +46,7 @@ npm run test:e2e  # drives the real Electron app against the mock Jira
 
 For maintainers.
 
-**Before the first release:** enable private vulnerability reporting in the repository settings (`SECURITY.md` points at it) and create the `TAP_PAT` secret that the cask workflow uses to push to the tap.
+**Before the first release:** enable private vulnerability reporting in the repository settings (`SECURITY.md` points at it). The cask workflow pushes to the tap with a deploy key stored as the `TAP_DEPLOY_KEY` secret, which already exists.
 
 1. Update `CHANGELOG.md`: move the entries from *Unreleased* to the new version with its date, and commit it. `npm version` refuses to run on a dirty working tree.
 2. Run `npm version minor` (or `patch`). The `preversion` script runs `npm test`, then npm bumps the version in `package.json`, commits and tags `vX.Y.Z`. The first release is the exception: `package.json` is already at 0.1.0, so tag it by hand with `git tag -a v0.1.0 -m v0.1.0`.

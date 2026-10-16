@@ -1,9 +1,9 @@
 # Runs when a release is published (not when the draft is created). It rewrites
 # version and checksums in Casks/issuemon.rb of fundament-agency/homebrew-tap.
 #
-# TAP_PAT is a fine-grained personal access token with contents read/write on
-# homebrew-tap only, stored as a repository secret. The default GITHUB_TOKEN
-# cannot push to another repository.
+# The push uses a write-enabled deploy key on fundament-agency/homebrew-tap; its
+# private half is stored as the repository secret TAP_DEPLOY_KEY here. The
+# default GITHUB_TOKEN cannot push to another repository.
 name: Update Homebrew cask
 
 on:
@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           repository: fundament-agency/homebrew-tap
-          token: ${{ secrets.TAP_PAT }}
+          ssh-key: ${{ secrets.TAP_DEPLOY_KEY }}
 
       - name: Rewrite version and checksums
         env:
