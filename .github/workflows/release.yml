@@ -1,7 +1,8 @@
 # Release flow: push a tag `vX.Y.Z` that matches the version in package.json.
-# This workflow tests the app, builds the macOS assets (arm64 and x64, a dmg and
-# a tar.xz for Homebrew), verifies the code signatures and the archives and only
-# then uploads the assets to a DRAFT GitHub release. Nothing is public yet.
+# This workflow runs the unit tests, builds the macOS assets (arm64 and x64, a dmg
+# and a tar.xz for Homebrew), verifies the code signatures and the archives, runs
+# the e2e tests against the built arm64 app and only then uploads the assets to a
+# DRAFT GitHub release. Nothing is public yet.
 # Review the draft, then publish it by hand on GitHub. Publishing triggers
 # update-cask.yml, which updates the Homebrew cask.
 name: Release
@@ -36,9 +37,6 @@ jobs:
 
       - run: npm test
 
-      # Three e2e sub-tests are known to be flaky; one retry is allowed.
-      - run: npm run test:e2e || npm run test:e2e
-
       # Nothing is uploaded before the signatures check out, so a broken build never leaves assets on a release.
       - name: Build
         run: npx electron-builder --mac --publish never
@@ -61,6 +59,12 @@ jobs:
           for f in dist/*.dmg; do
             hdiutil imageinfo "$f" | grep -q '^Format: ULMO$' || { echo "$f is not LZMA-compressed" >&2; exit 1; }
           done
+
+      # The e2e tests drive the Apple silicon app that is about to be uploaded. A few sub-tests are known to be flaky;
+      # one retry is allowed.
+      - run: npm run test:e2e || npm run test:e2e
+        env:
+          ISSUEMON_APP: dist/mac-arm64/IssueMon.app/Contents/MacOS/IssueMon
 
       - name: Create the draft release
         run: |

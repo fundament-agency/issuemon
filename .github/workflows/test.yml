@@ -28,3 +28,26 @@ jobs:
         with:
           name: e2e-screenshots
           path: e2e/screenshots/
+
+  # The built app is not `electron .`: it keeps five languages and has no SwiftShader (see package.json and
+  # scripts/after-pack.js). The runners are virtual machines, so this also shows it renders on a virtual GPU.
+  built-app:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx electron-builder --mac dir --arm64 --publish never
+      - run: codesign --verify --deep --strict --verbose=2 dist/mac-arm64/IssueMon.app
+      - run: npm run test:e2e || npm run test:e2e
+        env:
+          ISSUEMON_APP: dist/mac-arm64/IssueMon.app/Contents/MacOS/IssueMon
+      - name: Upload e2e screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-screenshots-built-app
+          path: e2e/screenshots/

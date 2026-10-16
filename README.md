@@ -108,9 +108,11 @@ Connect with URL `http://localhost:4778`, email `demo@example.com`, token `demo`
 ```bash
 npm test            # unit and integration tests, against the mock Jira
 npm run test:e2e    # drives the real app via Playwright through all flows; screenshots in e2e/screenshots/
-ISSUEMON_APP=dist/mac-arm64/IssueMon.app/Contents/MacOS/IssueMon npm run test:e2e   # same, against the built app
+ISSUEMON_APP=dist/mac-arm64/IssueMon.app/Contents/MacOS/IssueMon npm run test:e2e   # same, against the built app (npm run pack)
 npm run icons       # regenerate the icons from SVG (scripts/make-icons.js)
 ```
+
+On GitHub, the e2e tests run both from source and against the built Apple silicon app, which keeps fewer languages and has no SwiftShader (see *Building an app*); the release workflow tests the app it uploads.
 
 `test/i18n.test.js` checks that every catalog in `src/shared/locales/` has exactly the keys of `en.js`, with the same plural forms and placeholders, and is translated. UI text lives only in those catalogs.
 
