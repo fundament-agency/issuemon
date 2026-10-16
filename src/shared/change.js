@@ -35,6 +35,7 @@
 
   /** One line of plain text, for notifications. `me` is your display name. */
   function describe(c, { me, t = EN } = {}) {
+    if (c.field === 'gone') return t('change.gone');
     const who = c.author?.name || t('person.someone');
     if (assignedToMe(c, me)) return t('change.describe.assignedToYou', { who });
     switch (c.field) {
@@ -52,6 +53,7 @@
 
   /** Short sentence about one change, such as "You commented" or "Sam set it to Done". `authorIsMe`: the author is you (determined by account id). */
   function shortLine(c, { me, authorIsMe, t = EN } = {}) {
+    if (c.field === 'gone') return t('change.gone'); // nobody did it: no author, also not you
     const who = authorIsMe ? null : (c.author?.name?.trim() ? firstName(c.author) : t('person.someone'));
     const to = clip(c.to || t('change.empty'), 24);
     let what;
@@ -76,6 +78,7 @@
       return { text: c.to ? t('change.chip.assigned', { to: clip(c.to, 28) }) : t('change.chip.unassigned'), mine: false };
     }
     switch (c.field) {
+      case 'gone': return { text: t('change.chip.gone'), mine: false };
       case 'description': return { text: t('change.chip.description'), mine: false };
       case 'attachment': return { text: t(c.to ? 'change.chip.attachmentAdded' : 'change.chip.attachmentRemoved'), mine: false };
       case 'summary': return { text: t('change.chip.summary'), mine: false };

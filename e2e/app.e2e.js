@@ -446,6 +446,44 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     assert.equal(await page.textContent('.va-nav [data-view="tracked"] .count'), '5');
   });
 
+  await t.test('a tracked issue that is deleted or out of reach is reported once, and processing keeps the red row', async () => {
+    const notifications = () => app.evaluate(() => global.__issuemonNotifications);
+    const before = (await notifications()).length;
+    const changed = () => app.evaluate(() => global.__issuemon.tracker.changedCount());
+    jira.remove('WEB-1201');
+    await checkNow();
+    await page.click('[data-view="changed"]');
+    await page.waitForSelector('[data-row="WEB-1201"]');
+    assert.equal(await changed(), 2);
+    assert.deepEqual((await notifications()).slice(before).map(n => [n.title, n.body]), [['WEB-1201 changed', 'No longer accessible (deleted, or you no longer have access)']]);
+    await page.click('[data-row="WEB-1201"]');
+    await page.waitForSelector('.va-d .tl');
+    assert.match(await page.textContent('.va-d .tl'), /No longer accessible \(deleted, or you no longer have access\)/);
+    assert.match(await page.textContent('.va-d .banner.err'), /Not found, or no longer accessible/);
+    await shot('15-gone');
+
+    // Processed: out of Changed, still in Tracked with the error until you stop tracking it
+    await page.click('.va-d [data-action="mark"]');
+    await page.waitForSelector('[data-row="WEB-1201"]', { state: 'detached' });
+    assert.equal(await changed(), 1);
+    await page.click('[data-view="tracked"]');
+    await page.waitForSelector('.va-row.err[data-row="WEB-1201"]');
+    assert.match(await page.textContent('.va-row.err[data-row="WEB-1201"]'), /Not found, or no longer accessible/);
+
+    // Still missing at the next check: nothing new
+    await checkNow();
+    assert.equal(await changed(), 1);
+    assert.equal((await notifications()).length, before + 1);
+
+    // Access comes back: the red row goes, without a notification
+    jira.restore('WEB-1201');
+    await checkNow();
+    await page.waitForSelector('.va-row.err[data-row="WEB-1201"]', { state: 'detached' });
+    await page.waitForSelector('[data-row="WEB-1201"]');
+    assert.equal(await changed(), 1);
+    assert.equal((await notifications()).length, before + 1);
+  });
+
   await t.test('notes: add, edit, remove and turn one into an issue', async () => {
     await page.click('[data-view="notes"]');
     await page.waitForSelector('#note-input:focus');

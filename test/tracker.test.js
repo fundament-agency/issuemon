@@ -198,6 +198,291 @@ test('a vanished issue gets an error message but stays tracked', async t => {
   assert.equal(tracker.find('WEB-1').error, 'Not found, or no longer accessible');
 });
 
+test('a vanished issue: one pending change and a notification, once', async t => {
+  const { jira, tracker, notes } = await setup(t);
+  jira.addIssue({ key: 'WEB-1', summary: 'Checkout broken', updated: Date.now() - DAY });
+  await tracker.addIssues('WEB-1');
+  jira.remove('WEB-1');
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  const entry = tracker.find('WEB-1');
+  assert.deepEqual(entry.changes.map(c => [c.field, c.processed]), [['gone', false]]);
+  assert.equal(tracker.changedCount(), 1);
+  assert.deepEqual(notes, [{ title: 'WEB-1 changed', subtitle: 'Checkout broken', body: 'No longer accessible (deleted, or you no longer have access)', key: 'WEB-1' }]);
+
+  // A second check that still misses it adds nothing
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  assert.equal(entry.changes.length, 1);
+  assert.equal(notes.length, 1);
+
+  // Processed: out of Changed, still tracked with the error
+  tracker.markProcessed(['WEB-1']);
+  assert.equal(tracker.changedCount(), 0);
+  await tracker.check();
+  assert.equal(tracker.find('WEB-1').error, 'Not found, or no longer accessible');
+  assert.equal(entry.changes.length, 1);
+});
+
+test('a vanished issue: a failed fetch is not a vanished issue', async t => {
+  const { jira, tracker, notes } = await setup(t);
+  jira.addIssue({ key: 'WEB-1', summary: 'x', updated: Date.now() - DAY });
+  await tracker.addIssues('WEB-1');
+  jira.remove('WEB-1');
+  const down = Object.assign(new Error('No connection to Jira.'), { code: 'network' });
+  const real = tracker.getClient;
+  tracker.getClient = () => ({ ...real(), bulkFetch: async () => { throw down; } });
+  assert.equal((await tracker.check()).ok, false);
+  const failing = Object.assign(new Error('Jira had a problem (500).'), { status: 500 });
+  tracker.getClient = () => ({ ...real(), bulkFetch: async () => { throw failing; } });
+  assert.equal((await tracker.check()).ok, false);
+  const entry = tracker.find('WEB-1');
+  assert.deepEqual(entry.changes, []);
+  assert.equal(entry.error ?? null, null);
+  assert.equal(notes.length, 0);
+});
+
+test('a vanished issue that comes back: the error clears silently and an open "gone" change is processed', async t => {
+  const { jira, tracker, notes } = await setup(t);
+  jira.addIssue({ key: 'WEB-1', summary: 'x', updated: Date.now() - DAY });
+  await tracker.addIssues('WEB-1');
+  jira.remove('WEB-1');
+  await tracker.check();
+  assert.equal(tracker.changedCount(), 1);
+  jira.restore('WEB-1');
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  const entry = tracker.find('WEB-1');
+  assert.equal(entry.error, null);
+  assert.equal(tracker.changedCount(), 0);
+  assert.deepEqual(entry.changes.map(c => [c.field, c.processed]), [['gone', true]]);
+  assert.equal(notes.length, 1); // only the one about it vanishing
+
+  // Gone again later: reported again
+  jira.remove('WEB-1');
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.equal(entry.changes.filter(c => !c.processed).length, 1);
+});
+
+/** A tracker that has done its first check, so it knows who is connected, with these issues tracked. */
+async function trackedSetup(t, ...keys) {
+  const ctx = await setup(t);
+  for (const key of keys) ctx.jira.addIssue({ key, summary: `Issue ${key}`, updated: Date.now() - DAY });
+  await ctx.tracker.addIssues(keys.join(' '));
+  assert.equal((await ctx.tracker.check()).ok, true);
+  return ctx;
+}
+
+test('a vanished issue: a 200 that is no real answer reports nothing, and the check fails and is retried', async t => {
+  const { jira, tracker, notes, timers } = await trackedSetup(t, 'WEB-1');
+  jira.remove('WEB-1');
+  for (const body of [{}, '', null, { issues: null }, { issueErrors: [] }]) {
+    jira.bulkfetchBody = body;
+    const r = await tracker.check();
+    assert.equal(r.ok, false, JSON.stringify(body));
+    assert.equal(tracker.status.state, 'error');
+    assert.equal(timers.at(-1) <= 5 * 60_000, true); // a server-like error: back off, shorter than the 10 minute interval
+  }
+  const entry = tracker.find('WEB-1');
+  assert.deepEqual(entry.changes, []);
+  assert.equal(entry.missingSince, undefined);
+  assert.equal(entry.error ?? null, null);
+  assert.equal(notes.length, 0);
+});
+
+test('a vanished issue: one named in issueErrors had a temporary error, and that says nothing about it', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  const entry = tracker.find('WEB-1');
+  jira.issueErrorIds = [entry.id]; // by id: that is what the check asks for
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  assert.deepEqual(entry.changes, []);
+  assert.equal(entry.error ?? null, null);
+  assert.equal(entry.missingSince, undefined);
+  assert.equal(notes.length, 0);
+
+  // Also when it was already gone: the state stays as it was
+  jira.issueErrorIds = [];
+  jira.remove('WEB-1');
+  await tracker.check();
+  assert.equal(entry.changes.length, 1);
+  jira.issueErrorIds = [entry.id];
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  assert.equal(entry.error, 'Not found, or no longer accessible');
+  assert.equal(entry.changes.length, 1);
+  jira.restore('WEB-1'); // back, but Jira can't return it right now: still no word
+  await tracker.check();
+  assert.equal(entry.error, 'Not found, or no longer accessible');
+  assert.ok(entry.missingSince);
+  assert.equal(notes.length, 1);
+});
+
+test('a vanished issue: left out of issues and of issueErrors, it is reported once', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.remove('WEB-1');
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.deepEqual(tracker.find('WEB-1').changes.map(c => c.field), ['gone']);
+  assert.deepEqual(tracker.find('WEB-2').changes, []);
+  assert.equal(notes.length, 1);
+});
+
+test('a vanished issue: counted by id once the id is known, not only by key', async t => {
+  const { jira, tracker } = await trackedSetup(t, 'WEB-1');
+  assert.ok(tracker.find('WEB-1').id);
+  jira.remove('WEB-1');
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 }); // the request goes out by id
+});
+
+test('a vanished issue: when myself() fails nothing is reported and the check fails', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  jira.remove('WEB-1');
+  jira.myselfStatus = 401; // an expired token: bulkfetch answers 200 with an error for every issue, /myself says who you are
+  const r = await tracker.check();
+  assert.equal(r.ok, false);
+  assert.equal(tracker.status.code, 'auth');
+  const entry = tracker.find('WEB-1');
+  assert.deepEqual(entry.changes, []);
+  assert.equal(entry.missingSince, undefined);
+  assert.equal(notes.length, 0);
+
+  jira.myselfStatus = null;
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.equal(notes.length, 1);
+});
+
+test('a vanished issue: when another account answers nothing is reported in that check', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  tracker.data.me = { accountId: 'acc-someone-else', name: 'Someone Else' };
+  jira.remove('WEB-1');
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  const entry = tracker.find('WEB-1');
+  assert.equal(entry.error, 'Not found, or no longer accessible'); // red row only
+  assert.deepEqual(entry.changes, []);
+  assert.equal(entry.missingSince, undefined);
+  assert.equal(notes.length, 0);
+  assert.equal(tracker.data.me.accountId, jira.people.me.accountId); // who is connected is up to date again
+
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+});
+
+test('a vanished issue: two issues gone in one check have their own change, and undo of one leaves the other', async t => {
+  const { jira, tracker } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.remove('WEB-1');
+  jira.remove('WEB-2');
+  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
+  const [a, b] = ['WEB-1', 'WEB-2'].map(k => tracker.find(k).changes[0]);
+  assert.notEqual(a.id, b.id);
+  const ids = tracker.markProcessed(['WEB-1', 'WEB-2']);
+  assert.equal(ids.length, 2);
+  tracker.unmark([a.id]);
+  assert.equal(a.processed, false);
+  assert.equal(b.processed, true);
+  assert.equal(tracker.changedCount(), 1);
+});
+
+test('a vanished issue: the first check after changing the account is quiet, and so are later ones', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  jira.remove('WEB-1'); // the "new site" does not know it
+  tracker.credentialsChanged();
+  await tracker.testConnection(); // Connect fetches who you are before the check runs
+  jira.bulkfetchBody = {};
+  assert.equal((await tracker.check()).ok, false); // a failed check does not use up the quiet check
+  jira.bulkfetchBody = undefined;
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  const entry = tracker.find('WEB-1');
+  assert.equal(entry.error, 'Not found, or no longer accessible');
+  assert.deepEqual(entry.changes, []);
+  assert.ok(entry.missingSince);
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  assert.deepEqual(entry.changes, []);
+  assert.equal(notes.length, 0);
+
+  // Back and gone again: reported as usual
+  jira.restore('WEB-1');
+  await tracker.check();
+  assert.equal(entry.error, null);
+  jira.remove('WEB-1');
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+});
+
+test('a vanished issue: a failure on another issue in the same check loses nothing', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.remove('WEB-1');
+  jira.change('WEB-2', { field: 'status', from: 'To Do', to: 'Done', author: jira.people.alex });
+  const real = tracker.getClient;
+  tracker.getClient = () => ({ ...real(), changelog: async () => { throw Object.assign(new Error('No connection to Jira.'), { code: 'network' }); } });
+  assert.equal((await tracker.check()).ok, false);
+  const gone = tracker.find('WEB-1');
+  assert.deepEqual(gone.changes, []);
+  assert.equal(gone.missingSince, undefined);
+  assert.equal(notes.length, 0);
+
+  tracker.getClient = real;
+  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
+  assert.deepEqual(gone.changes.map(c => c.field), ['gone']);
+  assert.deepEqual(notes.map(n => n.key).sort(), ['WEB-1', 'WEB-2']);
+});
+
+test('a vanished issue: a change of account during a check keeps the next check quiet', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.remove('WEB-1');
+  jira.remove('WEB-2');
+  const real = tracker.getClient;
+  tracker.getClient = () => {
+    const client = real();
+    return { ...client, bulkFetch: async ids => { const res = await client.bulkFetch(ids); tracker.credentialsChanged(); return res; } }; // saved in Settings while the check waits for Jira
+  };
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 }); // the old site's answer reports nothing missing
+  assert.equal(tracker.find('WEB-1').missingSince, undefined);
+  tracker.getClient = real;
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 }); // the first check on the new site is still quiet
+  assert.ok(tracker.find('WEB-1').missingSince);
+  assert.deepEqual(tracker.find('WEB-1').changes, []);
+  assert.equal(notes.length, 0);
+});
+
+test('a vanished issue: a second change of account while the check asks who you are keeps the next check quiet', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  jira.remove('WEB-1');
+  tracker.credentialsChanged(); // the URL is saved
+  const real = tracker.getClient;
+  tracker.getClient = () => {
+    const client = real();
+    return { ...client, myself: async () => { const me = await client.myself(); tracker.credentialsChanged(); return me; } }; // and the email, while /myself is out
+  };
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  assert.equal(tracker.data.me, null); // the old site's answer does not count as who you are
+  tracker.getClient = real;
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  assert.ok(tracker.find('WEB-1').missingSince);
+  assert.deepEqual(tracker.find('WEB-1').changes, []);
+  assert.equal(notes.length, 0);
+});
+
+test('a vanished issue: one that was already red before this version stays quiet after the update', async t => {
+  const { jira, tracker, store, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  tracker.find('WEB-1').error = 'Not found, or no longer accessible'; // stored by 0.1.2, which had no missingSince
+  store.data = ensureShape({ ...JSON.parse(JSON.stringify(store.data)), version: 3 });
+  assert.ok(tracker.find('WEB-1').missingSince);
+  assert.equal(tracker.find('WEB-2').missingSince, undefined); // healthy entries are left alone
+  jira.remove('WEB-1');
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  assert.deepEqual(tracker.find('WEB-1').changes, []);
+  assert.equal(notes.length, 0);
+});
+
+test('a vanished issue: a failed check and a restart before the next one lose nothing', async t => {
+  const { jira, tracker, store, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.remove('WEB-1');
+  jira.change('WEB-2', { field: 'status', from: 'To Do', to: 'Done', author: jira.people.alex });
+  const real = tracker.getClient;
+  tracker.getClient = () => ({ ...real(), changelog: async () => { throw Object.assign(new Error('No connection to Jira.'), { code: 'network' }); } });
+  assert.equal((await tracker.check()).ok, false);
+  assert.ok(tracker.find('WEB-1').error); // red, but not yet recorded as gone
+  tracker.getClient = real;
+  store.data = ensureShape(JSON.parse(JSON.stringify(store.data))); // the app restarts: only storage from before this version is migrated
+  assert.equal(tracker.find('WEB-1').missingSince, undefined);
+  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
+  assert.deepEqual(tracker.find('WEB-1').changes.map(c => c.field), ['gone']);
+  assert.deepEqual(notes.map(n => n.key).sort(), ['WEB-1', 'WEB-2']);
+});
+
 test('moved issue: the key is updated via the id', async t => {
   const { jira, tracker } = await setup(t);
   const issue = jira.addIssue({ key: 'WEB-1', summary: 'x' });
@@ -423,14 +708,14 @@ test('ensureShape: the old Backlog flag and two project fields are migrated, ide
   assert.deepEqual(old({ excludedProjectKeys: ['DEV'] }).settings.excludedProjects, ['DEV']);
   // an existing excludedProjects wins, the old fields disappear
   assert.deepEqual(old({ excludedProjects: ['X'], excludedProjectNames: ['ARCHIVE-*'] }).settings.excludedProjects, ['X']);
-  assert.equal(merged.version, 3);
+  assert.equal(merged.version, 4);
   // fresh install
   const fresh = ensureShape({});
   assert.deepEqual(fresh.settings.excluded, []);
   assert.deepEqual(fresh.settings.excludedProjects, []);
   assert.equal(fresh.settings.notesProject, '');
   assert.equal('excludeBacklog' in fresh.settings, false);
-  assert.equal(fresh.version, 3);
+  assert.equal(fresh.version, 4);
   assert.equal(fresh.settings.staleSort, 'oldest');
   // twice gives the same result
   const once = old({ excluded: ['Closed', 'On hold'], excludeBacklog: true, excludedProjectNames: ['ARCHIVE-*'], excludedProjectKeys: ['DEV'] });
@@ -460,7 +745,7 @@ test('ensureShape: version 2 → 3 sets staleSort to oldest first, once', () => 
   // a v2 store saved the default 'newest', chosen or not
   const v2 = ensureShape({ version: 2, settings: { staleSort: 'newest' } });
   assert.equal(v2.settings.staleSort, 'oldest');
-  assert.equal(v2.version, 3);
+  assert.equal(v2.version, 4);
   // from v3 on the user's choice counts
   assert.equal(ensureShape({ version: 3, settings: { staleSort: 'newest' } }).settings.staleSort, 'newest');
   assert.equal(ensureShape(JSON.parse(JSON.stringify(v2))).settings.staleSort, 'oldest');

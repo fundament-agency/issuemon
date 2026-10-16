@@ -165,3 +165,14 @@ test('chip: default with field label and truncated at 28', () => {
   assert.deepEqual(chip({ field: 'priority', to: null }, { t: nl }), { text: 'Prioriteit → leeg', mine: false });
   assert.equal(chip({ field: 'sprint', to: 'x'.repeat(40) }).text, `Sprint → ${'x'.repeat(27)}…`);
 });
+
+test('a vanished issue: the same words everywhere, without an author', () => {
+  const gone = { field: 'gone', author: null, from: null, to: null };
+  const text = 'No longer accessible (deleted, or you no longer have access)';
+  assert.equal(describe(gone), text);
+  assert.equal(shortLine(gone), text);
+  assert.equal(shortLine(gone, { authorIsMe: true }), text);
+  assert.deepEqual(chip(gone), { text: 'No longer accessible', mine: false });
+  assert.equal(describe(gone, { t: nl }), 'Niet meer toegankelijk (verwijderd, of je hebt er geen toegang meer toe)');
+  assert.deepEqual(chip(gone, { t: nl }), { text: 'Niet meer toegankelijk', mine: false });
+});

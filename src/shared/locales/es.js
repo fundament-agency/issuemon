@@ -39,6 +39,7 @@
   'change.describe.attachmentRemoved': '{who} eliminó {name}',
   'change.describe.attachmentRemovedUnnamed': '{who} eliminó un adjunto',
   'change.describe.field': '{who} · {field}: {from} → {to}',
+  'change.gone': 'Ya no está accesible (eliminada, o ya no tienes acceso)',
   'change.short.comment': '{who} comentó',
   'change.short.commentEdited': '{who} editó un comentario',
   'change.short.status': '{who} la pasó a {to}',
@@ -72,6 +73,7 @@
   'change.chip.attachmentRemoved': 'Adjunto eliminado',
   'change.chip.summary': 'Título editado',
   'change.chip.field': '{field} → {to}',
+  'change.chip.gone': 'Ya no accesible',
 
   // Tracker status messages
   'status.unconfigured': 'Aún no conectado a Jira',
@@ -111,6 +113,7 @@
   'error.jira.server': 'Jira devolvió un error del servidor ({status}, {call}).',
   'error.jira.rejected': 'Jira rechazó la solicitud ({status}, {call}).',
   'error.jira.rejectedDetail': 'Jira rechazó la solicitud ({status}, {call}): {detail}',
+  'error.jira.unreadable': 'Jira envió una respuesta que IssueMon no puede leer ({call}).',
   'error.jira.projectUnavailable': 'El proyecto {project} no existe o no puedes crear incidencias en él.',
   'error.jira.noIssueType': 'El proyecto {project} no tiene ningún tipo de incidencia para una incidencia normal.',
 

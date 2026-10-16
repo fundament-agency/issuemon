@@ -45,11 +45,11 @@ const DEFAULT_SETTINGS = {
 };
 const STALE_SORTS = ['newest', 'oldest'];
 
-/** Fills in missing fields (new install or older storage) and migrates older storage to version 3. */
+/** Fills in missing fields (new install or older storage) and migrates older storage to version 4. */
 function ensureShape(data) {
   const d = data && typeof data === 'object' ? data : {};
   const from = Number.isInteger(d.version) ? d.version : 0;
-  d.version = 3;
+  d.version = 4;
   const stored = { ...(d.settings || {}) };
   // Version 1 → 2 (detected by the old fields, not by the version number): the Backlog flag became a regular status and the project fields for name and key became one.
   if ('excludeBacklog' in stored) {
@@ -76,7 +76,12 @@ function ensureShape(data) {
   if (!LANGUAGE_SETTINGS.includes(d.settings.language)) d.settings.language = 'system';
   d.me = d.me || null;
   d.tracked = Array.isArray(d.tracked) ? d.tracked.filter(t => t && t.key && !t.loading) : [];
-  for (const t of d.tracked) t.changes = Array.isArray(t.changes) ? t.changes : [];
+  for (const t of d.tracked) {
+    t.changes = Array.isArray(t.changes) ? t.changes : [];
+    // Version 3 → 4: up to 0.1.2 an issue that was missing had an error and nothing else (checkTracked is the only place that sets one): it is not announced after the update.
+    if (from < 4 && t.error && !t.missingSince) t.missingSince = d.lastCheck || Date.now();
+  }
+  d.reconnected = d.reconnected === true;
   d.stale = { issues: [], fetchedAt: null, error: null, ...(d.stale || {}) };
   d.notes = Array.isArray(d.notes) ? d.notes.filter(n => n && n.id && n.text) : [];
   for (const n of d.notes) delete n.creating;
@@ -145,6 +150,7 @@ class Tracker extends EventEmitter {
     this.typeCache = new Map(); // project -> { at, types }, not persisted
     this.activityCache = new Map(); // key -> { at, result } (failed attempts too), not persisted
     this.staleGen = 0; // counter of refreshStale requests, to discard outdated responses
+    this.credentialsGen = 0; // counter of credential changes: a check that began before one asked the old site
     this.people = NO_PEOPLE; // people list for the Stale setting, not persisted
     this.env = env; // fixed info for the renderer, e.g. { platform, packaged, locale }
     this.version = version;
@@ -226,8 +232,13 @@ class Tracker extends EventEmitter {
       let delay = this.settings.interval * MIN;
       let result;
       try {
-        if (!this.data.me) this.data.me = await client.myself();
-        fresh = await this.checkTracked(client);
+        const gen = this.credentialsGen; // credentials changed during this check: the old site's answers fill in and use up nothing
+        if (!this.data.me) {
+          const me = await client.myself();
+          if (gen === this.credentialsGen) this.data.me = me;
+        }
+        fresh = await this.checkTracked(client, { quiet: this.data.reconnected, gen });
+        if (gen === this.credentialsGen) this.data.reconnected = false; // only the first check that got an answer after (re)connecting is quiet
         await this.refreshStale(client);
         this.data.lastCheck = this.now();
         this.status = { state: 'ok', message: null };
@@ -254,20 +265,32 @@ class Tracker extends EventEmitter {
     return this.running;
   }
 
-  async checkTracked(client) {
+  /** `quiet`: issues missing from the answer are remembered (and shown in red) but not announced, such as on a new site. */
+  async checkTracked(client, { quiet = false, gen = this.credentialsGen } = {}) {
     const entries = this.data.tracked.filter(t => !t.loading);
     if (!entries.length) return [];
-    const { issues } = await client.bulkFetch(entries.map(t => t.id || t.key));
+    const { issues, errors } = await client.bulkFetch(entries.map(t => t.id || t.key));
     const byId = new Map(issues.map(i => [i.id, i]));
     const byKey = new Map(issues.map(i => [i.key, i]));
+    const failed = new Set(errors.map(e => String(e?.id))); // issueErrors: Jira could not return these right now (a retriable error)
     const fresh = [];
     const now = this.now();
+    const gone = []; // missing from the answer for the first time: recorded after the loop, so a failure in it loses nothing
 
     await mapLimit(entries, PARALLEL, async t => {
       const next = (t.id && byId.get(t.id)) || byKey.get(t.key);
       if (!next) {
+        // Jira's rule (BulkIssueResults.issueErrors): an issue that doesn't exist or that you may not see is simply left out of the answer,
+        // while issueErrors only names issues it could not return for a retriable reason. So an issue in neither list is deleted or out of reach
+        // (moves are followed by id, and Jira words both the same), and one in issueErrors says nothing: its state stays as it was.
+        if (failed.has(String(t.id || t.key))) return;
         t.error = this.t('error.trackedMissing');
+        if (!t.missingSince) gone.push(t);
         return;
+      }
+      if (t.missingSince) { // back again: the error goes silently, and an open "no longer accessible" no longer holds
+        delete t.missingSince;
+        for (const c of t.changes) if (c.field === 'gone' && !c.processed) Object.assign(c, { processed: true, processedAt: now });
       }
       t.error = null;
       t.lastChecked = now;
@@ -311,6 +334,24 @@ class Tracker extends EventEmitter {
       const news = added.filter(c => !c.processed);
       if (news.length) fresh.push({ key: t.key, summary: next.summary, changes: news });
     });
+
+    if (gone.length && gen === this.credentialsGen) { // after a change of credentials during this check, what the old site misses says nothing
+      // Bad credentials can look like an answer too (Jira Cloud treats them as anonymous: 200, every issue left out): only report
+      // when /myself still names the account we know. A failing /myself fails the check, so a dead token shows as an auth error.
+      const me = await client.myself();
+      const same = !this.data.me?.accountId || me.accountId === this.data.me.accountId;
+      this.data.me = me;
+      if (same) {
+        for (const t of gone) {
+          t.missingSince = now;
+          if (quiet) continue;
+          const change = { id: `gone-${t.id || t.key}-${now}`, at: now, author: null, field: 'gone', label: null, from: null, to: null, processed: false, processedAt: null };
+          t.changes.push(change);
+          this.prune(t);
+          fresh.push({ key: t.key, summary: t.issue?.summary || '', changes: [change] });
+        }
+      }
+    }
     return fresh;
   }
 
@@ -726,6 +767,8 @@ class Tracker extends EventEmitter {
   /** After a change of URL, email or token: log in again and check soon. */
   credentialsChanged() {
     this.data.me = null;
+    this.data.reconnected = true; // the new site may not know the issues tracked on the old one: the next check that gets an answer reports none missing
+    this.credentialsGen++;
     this.people = NO_PEOPLE;
     this.activityCache.clear();
     this.typeCache.clear();

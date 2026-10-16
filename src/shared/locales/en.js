@@ -39,6 +39,8 @@
   'change.describe.attachmentRemoved': '{who} removed {name}',
   'change.describe.attachmentRemovedUnnamed': '{who} removed an attachment',
   'change.describe.field': '{who} · {field}: {from} → {to}',
+  // A tracked issue missing from a successful check: deleted, or no longer visible to you (Jira says the same for both). No author.
+  'change.gone': 'No longer accessible (deleted, or you no longer have access)',
   'change.short.comment': '{who} commented',
   'change.short.commentEdited': '{who} edited a comment',
   'change.short.status': '{who} set it to {to}',
@@ -72,6 +74,7 @@
   'change.chip.attachmentRemoved': 'Attachment removed',
   'change.chip.summary': 'Title edited',
   'change.chip.field': '{field} → {to}',
+  'change.chip.gone': 'No longer accessible',
 
   // Tracker status messages
   'status.unconfigured': 'Not connected to Jira yet',
@@ -111,6 +114,7 @@
   'error.jira.server': 'Jira returned a server error ({status}, {call}).',
   'error.jira.rejected': 'Jira rejected the request ({status}, {call}).',
   'error.jira.rejectedDetail': 'Jira rejected the request ({status}, {call}): {detail}',
+  'error.jira.unreadable': 'Jira sent an answer IssueMon cannot read ({call}).',
   'error.jira.projectUnavailable': 'Project {project} does not exist, or you may not create issues in it.',
   'error.jira.noIssueType': 'Project {project} has no issue type for a regular issue.',
 
