@@ -909,6 +909,9 @@
 
   /* ---------- render ---------- */
 
+  let rendering = false;
+  const dirtyFields = new WeakSet();
+
   function render() {
     if (!S || drag) return; // not while dragging a note; a render follows on release
     const root = $('#app');
@@ -919,15 +922,19 @@
     const typing = ae && ae.id && root.contains(ae) && ae.matches('input:not([type=checkbox]), textarea');
     const focus = ae && ae.id && root.contains(ae) ? { id: ae.id, value: typing ? ae.value : null, s: ae.selectionStart, e: ae.selectionEnd } : null;
     Object.assign(UI, settle(S, UI, { wide: wide(), locale: t.locale })); // first make the selection consistent, then draw: draw() doesn't change UI
-    root.innerHTML = draw();
+    // Removing a focused, edited field can fire change/blur. That is a redraw,
+    // not a user commit. Keep its pending edit until a real change or blur.
+    rendering = true;
+    try { root.innerHTML = draw(); } finally { rendering = false; }
     root.querySelectorAll('[data-scroll-key]').forEach(el => { const y = scroll[el.dataset.scrollKey]; if (y) el.scrollTop = y; });
     if (focus) {
       const el = document.getElementById(focus.id);
       if (el) {
         if (focus.value != null) el.value = focus.value;
+        if (dirtyFields.has(ae)) dirtyFields.add(el);
         el.focus({ preventScroll: true });
         try { el.setSelectionRange(focus.s, focus.e); } catch { /* not every input type */ }
-      }
+      } else if (dirtyFields.has(ae)) commitField(ae); // navigating away really ends the edit, including via the menu
     }
     if (UI.reveal) { const key = UI.reveal; UI.reveal = null; reveal(key); }
     const n = C.counts.changed;
@@ -1423,8 +1430,8 @@
     if (prev) prev.innerHTML = addPreviewHtml(UI.addText);
   });
 
-  document.addEventListener('change', async e => {
-    const el = e.target;
+  async function commitField(el) {
+    dirtyFields.delete(el);
     if (el.matches('[data-token]')) { saveToken(el.value); el.value = ''; return; }
     if (el.matches('[data-draft-type]') && UI.draft) { UI.draft.typeId = el.value; return; }
     if (el.id === 'draft-project' && UI.draft) {
@@ -1441,7 +1448,20 @@
     const saved = await api.saveSettings({ [name]: el.type === 'checkbox' ? el.checked : el.value });
     if (name === 'baseUrl' && saved.urlRefused) { UI.conn = { ok: false, message: t('connect.urlInvalid') }; render(); return; }
     flashSaved();
+  }
+
+  document.addEventListener('change', e => {
+    if (!rendering) commitField(e.target);
   });
+
+  document.addEventListener('input', e => {
+    if (e.target.matches('input:not([type=checkbox]):not([type=radio]), textarea')) dirtyFields.add(e.target);
+  });
+  document.addEventListener('blur', e => {
+    // A replacement field's value was set by script, so Chromium no longer
+    // emits change on blur. Preserve the original edit's commit semantics.
+    if (!rendering && dirtyFields.has(e.target)) e.target.dispatchEvent(new Event('change', { bubbles: true }));
+  }, true);
 
   // Paste = track: outside an input field, or in an empty paste field.
   document.addEventListener('paste', e => {
