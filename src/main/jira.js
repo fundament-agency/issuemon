@@ -147,7 +147,7 @@ function createJiraClient({ baseUrl, email, token, userAgent = 'IssueMon', fetch
       return out.sort((a, b) => a.name.localeCompare(b.name, t.locale));
     },
 
-    /** Several issues at once (by id or key), including the description (search leaves it out, as it fetches up to 1000 issues). Unknown or inaccessible issues are simply missing. */
+    /** Several issues at once (by id or key), including the description (search leaves it out, as it fetches up to 1000 issues). Unknown or inaccessible issues are simply missing from `issues`; `errors` (issueErrors, { id, errorMessage }) only names issues Jira could not return for a retriable reason. */
     async bulkFetch(idsOrKeys) {
       const issues = [];
       const errors = [];
@@ -155,8 +155,11 @@ function createJiraClient({ baseUrl, email, token, userAgent = 'IssueMon', fetch
         const res = await request('POST', '/rest/api/3/issue/bulkfetch', {
           body: { issueIdsOrKeys: idsOrKeys.slice(i, i + PAGE), fields: [...ISSUE_FIELDS, 'description'] },
         });
-        issues.push(...(res.issues || []).map(normalizeIssue));
-        errors.push(...(res.issueErrors || []));
+        // A 200 without a list of issues is no answer (a proxy's page, an empty body): with no status and no code the error counts as
+        // transient, so the check is retried with backoff and nothing is concluded from what is missing.
+        if (!Array.isArray(res?.issues)) throw new JiraError(t('error.jira.unreadable', { call: 'POST /rest/api/3/issue/bulkfetch' }));
+        issues.push(...res.issues.map(normalizeIssue));
+        errors.push(...(Array.isArray(res.issueErrors) ? res.issueErrors : []));
       }
       return { issues, errors };
     },

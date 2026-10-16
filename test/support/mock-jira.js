@@ -34,6 +34,7 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     { accountId: 'acc-former', displayName: 'Former Colleague', accountType: 'atlassian', active: false },
   ];
   const issues = new Map();
+  const removed = new Map(); // key → issue taken away by remove(), for restore()
   const requests = [];
   const projectKeys = new Set(projects); // where you may create issues; addIssue adds the project of the key
   let seq = 10_000;
@@ -210,16 +211,24 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
       return json(res, 401, { errorMessages: ['Client must be authenticated to access this resource.'] });
     }
 
-    if (req.method === 'GET' && url.pathname === '/rest/api/3/myself') return json(res, 200, people.me);
+    if (req.method === 'GET' && url.pathname === '/rest/api/3/myself') {
+      if (mock.myselfStatus) return json(res, mock.myselfStatus, { errorMessages: ['Mock: /myself fails.'] });
+      return json(res, 200, people.me);
+    }
     if (req.method === 'GET' && url.pathname === '/rest/api/3/users/search') {
       if (mock.usersForbidden) return json(res, 403, { errorMessages: ['You do not have the permission to browse users.'] });
       const startAt = Number(url.searchParams.get('startAt') || 0);
       return json(res, 200, mock.users.slice(startAt, startAt + Number(url.searchParams.get('maxResults') || 50)));
     }
     if (req.method === 'POST' && url.pathname === '/rest/api/3/issue/bulkfetch') {
+      if (mock.bulkfetchBody !== undefined) return json(res, 200, mock.bulkfetchBody); // a 200 that is no real answer, such as a proxy's
       const wanted = body?.issueIdsOrKeys || [];
-      const found = [...issues.values()].filter(i => wanted.includes(i.key) || wanted.includes(i.id));
-      return json(res, 200, { issues: found.map(toApi), issueErrors: [] });
+      // Like Jira Cloud (spec: BulkIssueResults.issueErrors): an issue that doesn't exist or that you may not see is simply left out,
+      // and issueErrors is empty. Only an issue Jira can't return for a retriable reason is named there, with its id.
+      const failing = wanted.filter(w => mock.issueErrorIds.includes(w));
+      const found = [...issues.values()].filter(i => (wanted.includes(i.key) || wanted.includes(i.id)) && !failing.includes(i.key) && !failing.includes(i.id));
+      const issueErrors = failing.map(id => ({ id, errorMessage: 'Jira could not fetch this issue right now. Try again later.' }));
+      return json(res, 200, { issues: found.map(toApi), issueErrors });
     }
     const meta = url.pathname.match(/^\/rest\/api\/3\/issue\/createmeta\/([^/]+)\/issuetypes$/);
     if (req.method === 'GET' && meta) {
@@ -276,13 +285,19 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     issueTypes: [...ISSUE_TYPES], // can be changed per test
     users,
     usersForbidden: false,
+    myselfStatus: null, // HTTP status for GET /myself instead of the user, e.g. 500
+    bulkfetchBody: undefined, // a body to answer every bulkfetch with (status 200), e.g. {} like a proxy would
+    issueErrorIds: [], // ids or keys that bulkfetch leaves out of issues and names in issueErrors, as for a retriable error
     release: APP_VERSION, // the latest release the update check sees; the running version means "up to date"
     addIssue,
     change,
     comment,
     editComment,
     randomChange,
-    remove: key => issues.delete(key),
+    /** The issue is deleted, or you lost access to it: bulkfetch leaves it out. */
+    remove: key => { if (issues.has(key)) removed.set(key, issues.get(key)); return issues.delete(key); },
+    /** Undoes remove(): the same issue (same id) is back. */
+    restore: key => { const i = removed.get(key); if (i) { issues.set(key, i); removed.delete(key); } return !!i; },
     get url() { return `http://127.0.0.1:${server.address().port}`; },
     start(port = 0) {
       server = http.createServer((req, res) => handler(req, res).catch(err => json(res, 500, { errorMessages: [err.message] })));

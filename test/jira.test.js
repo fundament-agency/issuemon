@@ -92,6 +92,24 @@ test('Jira client against the mock Jira', async t => {
     assert.ok(req.body.fields.includes('updated'));
   });
 
+  await t.test('bulkFetch throws on a 200 without a list of issues, as a transient error', async () => {
+    for (const body of [{}, '', null, { issues: {} }]) {
+      jira.bulkfetchBody = body;
+      await assert.rejects(client.bulkFetch(['WEB-1']), err => err.name === 'JiraError' && !err.code && !err.status && /Jira/.test(err.message), JSON.stringify(body));
+    }
+    jira.bulkfetchBody = undefined;
+  });
+
+  await t.test('bulkFetch returns the issueErrors too, and none for an unknown key', async () => {
+    const plain = await client.bulkFetch(['WEB-1', 'WEB-404']);
+    assert.deepEqual(plain.errors, []); // a missing issue is just left out
+    jira.issueErrorIds = ['WEB-1'];
+    const { issues, errors } = await client.bulkFetch(['WEB-1', 'WEB-404']);
+    jira.issueErrorIds = [];
+    assert.equal(issues.length, 0);
+    assert.deepEqual(errors.map(e => e.id), ['WEB-1']);
+  });
+
   await t.test('bulkFetch requests the description, search does not', async () => {
     jira.addIssue({ key: 'WEB-2', summary: 'Twee', description: 'Wat er speelt' });
     const { issues } = await client.bulkFetch(['WEB-2']);

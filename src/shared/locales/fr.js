@@ -40,6 +40,7 @@
   'change.describe.attachmentRemoved': '{who} a supprimé {name}',
   'change.describe.attachmentRemovedUnnamed': '{who} a supprimé une pièce jointe',
   'change.describe.field': '{who} · {field} : {from} → {to}',
+  'change.gone': 'N’est plus accessible (supprimé, ou vous n’y avez plus accès)',
   'change.short.comment': '{who} a commenté',
   'change.short.commentEdited': '{who} a modifié un commentaire',
   'change.short.status': '{who} a passé le statut à {to}',
@@ -72,6 +73,7 @@
   'change.chip.attachmentRemoved': 'Pièce jointe supprimée',
   'change.chip.summary': 'Titre modifié',
   'change.chip.field': '{field} → {to}',
+  'change.chip.gone': 'Plus accessible',
 
   // Tracker status messages
   'status.unconfigured': 'Pas encore connecté à Jira',
@@ -111,6 +113,7 @@
   'error.jira.server': 'Jira a renvoyé une erreur serveur ({status}, {call}).',
   'error.jira.rejected': 'Jira a refusé la requête ({status}, {call}).',
   'error.jira.rejectedDetail': 'Jira a refusé la requête ({status}, {call}) : {detail}',
+  'error.jira.unreadable': 'Jira a envoyé une réponse qu’IssueMon ne peut pas lire ({call}).',
   'error.jira.projectUnavailable': 'Le projet {project} n’existe pas, ou vous ne pouvez pas y créer de tickets.',
   'error.jira.noIssueType': 'Le projet {project} n’a aucun type de ticket pour un ticket standard.',
 

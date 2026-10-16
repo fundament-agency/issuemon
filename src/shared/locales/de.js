@@ -40,6 +40,7 @@
   'change.describe.attachmentRemoved': '{who} hat {name} entfernt',
   'change.describe.attachmentRemovedUnnamed': '{who} hat einen Anhang entfernt',
   'change.describe.field': '{who} · {field}: {from} → {to}',
+  'change.gone': 'Nicht mehr zugänglich (gelöscht, oder du hast keinen Zugriff mehr)',
   'change.short.comment': '{who} hat kommentiert',
   'change.short.commentEdited': '{who} hat einen Kommentar bearbeitet',
   'change.short.status': '{who} hat es auf {to} gesetzt',
@@ -72,6 +73,7 @@
   'change.chip.attachmentRemoved': 'Anhang entfernt',
   'change.chip.summary': 'Titel bearbeitet',
   'change.chip.field': '{field} → {to}',
+  'change.chip.gone': 'Nicht mehr zugänglich',
 
   // Tracker status messages
   'status.unconfigured': 'Noch nicht mit Jira verbunden',
@@ -111,6 +113,7 @@
   'error.jira.server': 'Jira hat einen Serverfehler gemeldet ({status}, {call}).',
   'error.jira.rejected': 'Jira hat die Anfrage abgelehnt ({status}, {call}).',
   'error.jira.rejectedDetail': 'Jira hat die Anfrage abgelehnt ({status}, {call}): {detail}',
+  'error.jira.unreadable': 'Jira hat eine Antwort gesendet, die IssueMon nicht lesen kann ({call}).',
   'error.jira.projectUnavailable': 'Das Projekt {project} existiert nicht, oder du darfst darin keine Issues erstellen.',
   'error.jira.noIssueType': 'Das Projekt {project} hat keinen Issue-Typ für ein normales Issue.',
 

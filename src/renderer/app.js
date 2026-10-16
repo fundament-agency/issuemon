@@ -200,6 +200,7 @@
     const who = `<b>${esc(c.author?.name || t('person.someone'))}</b>`;
     const from = c.from ? `<span class="from">${esc(clip(c.from, 120))}</span>` : '';
     switch (c.field) {
+      case 'gone': return [`<span class="err-text">${esc(t('change.gone'))}</span>`, ''];
       case 'comment':
         if (!c.edited) return [t('change.timeline.comment', { who }), `<blockquote>${esc(c.to)}</blockquote>`];
         // An edit: word by word when IssueMon recorded the old text, else just the new text

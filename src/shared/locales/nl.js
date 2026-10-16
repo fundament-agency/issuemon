@@ -38,6 +38,7 @@
   'change.describe.attachmentRemoved': '{who} verwijderde {name}',
   'change.describe.attachmentRemovedUnnamed': '{who} verwijderde een bijlage',
   'change.describe.field': '{who} · {field}: {from} → {to}',
+  'change.gone': 'Niet meer toegankelijk (verwijderd, of je hebt er geen toegang meer toe)',
   'change.short.comment': '{who} reageerde',
   'change.short.commentEdited': '{who} paste een reactie aan',
   'change.short.status': '{who} zette op {to}',
@@ -70,6 +71,7 @@
   'change.chip.attachmentRemoved': 'Bijlage verwijderd',
   'change.chip.summary': 'Titel aangepast',
   'change.chip.field': '{field} → {to}',
+  'change.chip.gone': 'Niet meer toegankelijk',
 
   // Tracker status messages
   'status.unconfigured': 'Nog niet gekoppeld aan Jira',
@@ -109,6 +111,7 @@
   'error.jira.server': 'Jira gaf een serverfout ({status}, {call}).',
   'error.jira.rejected': 'Jira weigerde het verzoek ({status}, {call}).',
   'error.jira.rejectedDetail': 'Jira weigerde het verzoek ({status}, {call}): {detail}',
+  'error.jira.unreadable': 'Jira stuurde een antwoord dat IssueMon niet kan lezen ({call}).',
   'error.jira.projectUnavailable': 'Project {project} bestaat niet, of je mag er geen issues in aanmaken.',
   'error.jira.noIssueType': 'Project {project} heeft geen issuetype voor een gewoon issue.',
 
