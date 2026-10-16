@@ -1,7 +1,7 @@
 {
   "name": "issuemon",
   "productName": "IssueMon",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Keep an eye on Jira issues and see right away what changed.",
   "private": true,
   "license": "MIT",
