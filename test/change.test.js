@@ -97,6 +97,14 @@ test('shortLine: who did it (you, first name, someone)', () => {
   assert.equal(shortLine({ ...c, author: null }, { t: nl }), 'Iemand reageerde');
 });
 
+test('an edited comment: "edited a comment" with the new text', () => {
+  const c = { field: 'comment', edited: true, from: 'Waiting.', to: 'Legal approved the text,\n can ship.', author: Sam };
+  assert.equal(describe(c), 'Sam Rivera edited a comment: “Legal approved the text, can ship.”');
+  assert.equal(describe(c, { t: nl }), 'Sam Rivera paste een reactie aan: “Legal approved the text, can ship.”');
+  assert.equal(shortLine(c, {}), 'Sam edited a comment');
+  assert.equal(shortLine(c, { authorIsMe: true }), 'You edited a comment');
+});
+
 test('shortLine: status, priority and removed values', () => {
   const by = { author: Sam };
   assert.equal(shortLine({ ...by, field: 'status', to: 'Done' }), 'Sam set it to Done');

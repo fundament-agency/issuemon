@@ -772,6 +772,31 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await until(async () => (await rows()).length === 4, 'everyone');
   });
 
+  await t.test('an edited comment appears in Changed, with a notification', async () => {
+    const before = (await app.evaluate(() => global.__issuemonNotifications)).length;
+    const id = jira.issues.get('WEB-1201').comments[0].id; // Priya's comment from the demo data, older than the tracking
+    jira.editComment('WEB-1201', id, 'Legal approved the text, can ship.', jira.people.priya);
+    await checkNow();
+    await page.click('[data-view="changed"]');
+    await page.waitForSelector('.va-row.unread[data-row="WEB-1201"]');
+    assert.equal(await page.textContent('.va-row[data-row="WEB-1201"] .chip'), '1 comment edited');
+    const notes = await app.evaluate(() => global.__issuemonNotifications);
+    assert.deepEqual(notes.slice(before).map(n => [n.title, n.body]), [['WEB-1201 changed', 'Priya Patel edited a comment: “Legal approved the text, can ship.”']]);
+    await page.click('[data-row="WEB-1201"]');
+    await page.waitForSelector('.va-d .tl blockquote');
+    assert.match(await page.textContent('.va-d .tl'), /Priya Patel edited a comment.*Legal approved the text, can ship\./s);
+
+    // A second edit: IssueMon now knows the old text, so the timeline marks what changed
+    jira.editComment('WEB-1201', id, 'Legal approved the text, ship it on Monday.', jira.people.priya);
+    await checkNow();
+    await page.waitForSelector('.va-d .tl .diff');
+    assert.match((await page.locator('.va-d .tl .diff ins').allTextContents()).join(' '), /Monday/);
+    assert.equal(await page.textContent('.va-row[data-row="WEB-1201"] .chip'), '1 comment edited'); // one comment, edited twice
+    await shot('17-comment-edited');
+    await page.click('.va-d [data-action="mark"]');
+    await page.waitForSelector('[data-row="WEB-1201"]', { state: 'detached' });
+  });
+
   await t.test('updates: a newer release is announced, Later hides it, and up to date again', async () => {
     const opened = () => app.evaluate(() => global.__issuemonOpened || []);
     const status = async () => (await page.textContent('#update-status')).replace(/\s+/g, ' ').trim();

@@ -6,7 +6,7 @@ const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const { parseKeys } = require('../shared/keys');
 const { pending, isChanged, changedList } = require('../shared/inbox');
-const { changesFromChangelog, changesFromComments, changesFromSnapshots, staleJql, excludedProject } = require('./changes');
+const { changesFromChangelog, changesFromComments, commentIdOf, changesFromSnapshots, staleJql, excludedProject } = require('./changes');
 const { describe, assignedToMe } = require('../shared/change');
 const { INTERVALS, THEMES, noteText, projectKey, notesProjectOf, isConfigured } = require('../shared/rules');
 const { normalizeBaseUrl } = require('./jira');
@@ -288,7 +288,7 @@ class Tracker extends EventEmitter {
       let found;
       try {
         const [histories, comments] = await Promise.all([client.changelog(t.key), client.comments(t.key)]);
-        found = [...changesFromChangelog(histories, since), ...changesFromComments(comments, since)];
+        found = [...changesFromChangelog(histories, since), ...changesFromComments(comments, since, this.commentTexts(t))];
       } catch (err) {
         if (err.code === 'auth' || err.code === 'network' || err.code === 'rate_limited') throw err;
         found = changesFromSnapshots(prev, next);
@@ -312,6 +312,16 @@ class Tracker extends EventEmitter {
       if (news.length) fresh.push({ key: t.key, summary: next.summary, changes: news });
     });
     return fresh;
+  }
+
+  /** Comment id → the latest text IssueMon recorded for it (as a new comment or an edit): the old text of the next edit. */
+  commentTexts(t) {
+    const texts = new Map();
+    for (const c of [...t.changes].sort((a, b) => a.at - b.at)) {
+      const id = commentIdOf(c);
+      if (id) texts.set(id, c.to ?? '');
+    }
+    return texts;
   }
 
   async refreshStale(client) {

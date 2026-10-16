@@ -34,12 +34,14 @@
   'change.empty': 'vide',
   'change.describe.assignedToYou': '{who} · Vous a été attribué',
   'change.describe.comment': '{who} : « {text} »',
+  'change.describe.commentEdited': '{who} a modifié un commentaire : « {text} »',
   'change.describe.description': '{who} a modifié la description',
   'change.describe.attachmentAdded': '{who} a ajouté {name}',
   'change.describe.attachmentRemoved': '{who} a supprimé {name}',
   'change.describe.attachmentRemovedUnnamed': '{who} a supprimé une pièce jointe',
   'change.describe.field': '{who} · {field} : {from} → {to}',
   'change.short.comment': '{who} a commenté',
+  'change.short.commentEdited': '{who} a modifié un commentaire',
   'change.short.status': '{who} a passé le statut à {to}',
   'change.short.assignedToYou': '{who} vous l’a attribué',
   'change.short.assigned': '{who} l’a attribué à {to}',
@@ -51,6 +53,7 @@
   'change.short.attachmentRemoved': '{who} a supprimé une pièce jointe',
   'change.short.field': '{who} a modifié le champ {field}',
   'change.short.mine.comment': 'Vous avez commenté',
+  'change.short.mine.commentEdited': 'Vous avez modifié un commentaire',
   'change.short.mine.status': 'Vous avez passé le statut à {to}',
   'change.short.mine.assignedToYou': 'Vous vous l’êtes attribué',
   'change.short.mine.assigned': 'Vous l’avez attribué à {to}',
@@ -233,6 +236,7 @@
 
   // One row in a list
   'row.comments': { one: '{n} commentaire', other: '{n} commentaires' },
+  'row.commentsEdited': { one: '{n} commentaire modifié', other: '{n} commentaires modifiés' },
   'row.loading': 'chargement…',
   'row.notFetched': 'Pas encore récupéré',
   'row.untrackLabel': 'Ne plus suivre {key}',
@@ -274,6 +278,7 @@
 
   // Timeline of changes
   'change.timeline.comment': '{who} a commenté',
+  'change.timeline.commentEdited': '{who} a modifié un commentaire',
   'change.timeline.description': '{who} a modifié la description',
   'change.timeline.attachmentAdded': '{who} a ajouté {name}',
   'change.timeline.attachmentRemoved': '{who} a supprimé la pièce jointe {name}',

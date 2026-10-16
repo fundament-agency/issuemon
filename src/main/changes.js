@@ -84,16 +84,36 @@ function changesFromChangelog(histories, since) {
   return out;
 }
 
-/** Comments → changes, only after `since` (exclusive). */
-function changesFromComments(comments, since) {
+/**
+ * Comments → changes, only after `since` (exclusive). A comment created after `since` is a new comment with its latest
+ * text (id `c<id>`). An older comment edited after `since` is an edit by its updateAuthor (id `c<id>@<edit time>`, so
+ * every edit counts once); `previous` (comment id → text IssueMon saw before) gives its old text, else `from` is null.
+ * A comment IssueMon already saw counts only as an edit, and not when its text is unchanged (a save without changes,
+ * or a new visibility).
+ */
+function changesFromComments(comments, since, previous = new Map()) {
   const out = [];
   for (const c of comments || []) {
     const at = parseJiraDate(c.created);
-    if (at == null || (since != null && at <= since)) continue;
-    out.push({ id: `c${c.id}`, at, author: user(c.author), field: 'comment', label: 'Comment', from: null, to: adfToText(c.body) });
+    if (at == null) continue;
+    const to = adfToText(c.body);
+    const seen = previous.get(String(c.id));
+    if ((since == null || at > since) && seen === undefined) {
+      out.push({ id: `c${c.id}`, at, author: user(c.author), field: 'comment', label: 'Comment', from: null, to });
+      continue;
+    }
+    const edited = parseJiraDate(c.updated);
+    if (edited == null || (since != null && edited <= since) || seen === to) continue;
+    out.push({
+      id: `c${c.id}@${edited}`, at: edited, author: user(c.updateAuthor || c.author), field: 'comment', label: 'Comment',
+      edited: true, from: seen ?? null, to,
+    });
   }
   return out;
 }
+
+/** The Jira comment id of a comment change (`c<id>` or `c<id>@<edit time>`), else null. */
+const commentIdOf = change => (change.field === 'comment' ? /^c([^@]+)/.exec(change.id || '')?.[1] ?? null : null);
 
 /** Same user: by account id when both have one, else by name (so a user without a name is not "unassigned"). */
 const sameUser = (a, b) => (!a || !b ? !a === !b : a.accountId && b.accountId ? a.accountId === b.accountId : (a.name || null) === (b.name || null));
@@ -186,6 +206,7 @@ module.exports = {
   normalizeIssue,
   changesFromChangelog,
   changesFromComments,
+  commentIdOf,
   changesFromSnapshots,
   adfToText,
   staleJql,

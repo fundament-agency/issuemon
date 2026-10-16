@@ -99,6 +99,56 @@ test('own changes are stored silently as processed', async t => {
   assert.equal(tracker.changedCount(), 0);
 });
 
+test('an edited comment is one pending change per edit, with the old text when IssueMon saw it', async t => {
+  const { jira, tracker, notes } = await setup(t);
+  const { priya, sam } = jira.people;
+  const now = Date.now();
+  jira.addIssue({ key: 'WEB-1', summary: 'Footer links', updated: now - 3 * DAY });
+  const old = jira.comment('WEB-1', 'Waiting for the legal check.', priya, now - 3 * DAY).comments[0].id;
+  await tracker.addIssues('WEB-1');
+
+  jira.editComment('WEB-1', old, 'Legal approved the text, can ship.', priya, now - 2 * DAY);
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  const entry = tracker.find('WEB-1');
+  assert.deepEqual(entry.changes.map(c => [c.id, c.edited, c.from, c.to, c.processed]), [
+    [`c${old}@${now - 2 * DAY}`, true, null, 'Legal approved the text, can ship.', false], // seen before tracking: no old text
+  ]);
+  assert.deepEqual(notes.pop(), { title: 'WEB-1 changed', subtitle: 'Footer links', body: 'Priya Patel edited a comment: “Legal approved the text, can ship.”', key: 'WEB-1' });
+
+  // A re-check without an edit adds nothing
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+  assert.equal(entry.changes.length, 1);
+
+  // A second edit is a new change, with the text of the first edit as the old text
+  jira.editComment('WEB-1', old, 'Legal approved the text, ship it on Monday.', priya, now - DAY);
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.deepEqual(entry.changes.slice(1).map(c => [c.id, c.from, c.to]), [
+    [`c${old}@${now - DAY}`, 'Legal approved the text, can ship.', 'Legal approved the text, ship it on Monday.'],
+  ]);
+
+  // A comment IssueMon recorded as new, edited later: the recorded text is the old text
+  const fresh = jira.comment('WEB-1', 'PR is ready.', sam, now - DAY / 2).comments[1].id;
+  await tracker.check();
+  jira.editComment('WEB-1', fresh, 'PR is ready for review.', sam, now - DAY / 4);
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  const last = entry.changes.at(-1);
+  assert.deepEqual([last.id, last.author.name, last.from, last.to], [`c${fresh}@${now - DAY / 4}`, 'Sam Rivera', 'PR is ready.', 'PR is ready for review.']);
+});
+
+test('your own comment edits follow "Don\'t notify my own changes"', async t => {
+  const { jira, tracker, notes } = await setup(t, { ignoreOwn: true });
+  const { me } = jira.people;
+  jira.addIssue({ key: 'WEB-1', summary: 'x', updated: Date.now() - 2 * DAY });
+  const id = jira.comment('WEB-1', 'Draft', me, Date.now() - 2 * DAY).comments[0].id;
+  await tracker.addIssues('WEB-1');
+  await tracker.check(); // fetches "me"
+  jira.editComment('WEB-1', id, 'Final', me);
+  await tracker.check();
+  const [c] = tracker.find('WEB-1').changes;
+  assert.deepEqual([c.edited, c.processed, c.own], [true, true, true]);
+  assert.equal(notes.length, 0);
+});
+
 test('changedIssues: only issues with open changes, newest first', async t => {
   const { jira, tracker } = await setup(t);
   const now = Date.now();
