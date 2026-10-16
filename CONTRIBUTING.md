@@ -51,7 +51,7 @@ For maintainers.
 1. Update `CHANGELOG.md`: move the entries from *Unreleased* to the new version with its date, and commit it. `npm version` refuses to run on a dirty working tree.
 2. Run `npm version minor` (or `patch`). The `preversion` script runs `npm test`, then npm bumps the version in `package.json`, commits and tags `vX.Y.Z`. The first release is the exception: `package.json` is already at 0.1.0, so tag it by hand with `git tag -a v0.1.0 -m v0.1.0`.
 3. Push the commit and the tag: `git push --follow-tags`.
-4. The release workflow runs the unit tests, builds the macOS app for arm64 and x64 (signed ad hoc) as a `.dmg` and a `.tar.xz`, verifies the code signatures and the archives, runs the e2e tests against the built Apple silicon app and only then creates a **draft** GitHub release with the assets, using the GitHub CLI. A broken signature stops the workflow before anything is uploaded.
+4. The release workflow runs the unit tests, builds the macOS app for arm64 and x64 (signed ad hoc) as a `.dmg` and a `.tar.xz`, verifies the code signatures and the archives, runs the e2e tests against the built Apple silicon app and only then creates a **draft** GitHub release with the assets, using the GitHub CLI. A broken signature or archive, or a failing test, stops the workflow before anything is uploaded.
 5. Write the release notes on the draft and publish it by hand.
 6. Publishing triggers the workflow that updates the Homebrew cask in `fundament-agency/homebrew-tap`.
 

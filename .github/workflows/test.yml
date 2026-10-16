@@ -31,6 +31,7 @@ jobs:
 
   # The built app is not `electron .`: it keeps five languages and has no SwiftShader (see package.json and
   # scripts/after-pack.js). The runners are virtual machines, so this also shows it renders on a virtual GPU.
+  # Building the dmg also runs scripts/artifact-build-completed.js, so the release's archive steps are tested here first.
   built-app:
     runs-on: macos-latest
     steps:
@@ -43,10 +44,11 @@ jobs:
       # Electron downloads its binary, and the licence files the build copies from it, on first use.
       - run: npx --no install-electron
       # electron-builder skips signing in pull requests to keep certificates away from forks; an ad-hoc signature needs none.
-      - run: npx electron-builder --mac dir --arm64 --publish never
+      - run: npx electron-builder --mac dmg --arm64 --publish never
         env:
           CSC_FOR_PULL_REQUEST: true
       - run: codesign --verify --deep --strict --verbose=2 dist/mac-arm64/IssueMon.app
+      - run: scripts/verify-archives.sh arm64
       - run: npm run test:e2e || npm run test:e2e
         env:
           ISSUEMON_APP: dist/mac-arm64/IssueMon.app/Contents/MacOS/IssueMon
