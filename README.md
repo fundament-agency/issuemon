@@ -161,6 +161,8 @@ This produces four assets in `dist/`:
 
 Open a `.dmg` and drag `IssueMon.app` to Applications. `npm run pack` builds without an installer, to `dist/mac-arm64/IssueMon.app` (Intel: `dist/mac/IssueMon.app`).
 
+The app keeps Chromium's resources only for its own five languages, plus British English and Latin American Spanish, which macOS picks for regional variants such as en-AU or es-MX (`electronLanguages` in `package.json`). On a Mac in another language Chromium falls back to English, and so does IssueMon, with en-GB dates.
+
 The app is *ad-hoc* signed and not notarized. Built locally, it just starts; on another Mac, macOS blocks it the first time, see *First launch*.
 
 ## Contributing and security

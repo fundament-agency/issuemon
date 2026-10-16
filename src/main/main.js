@@ -15,7 +15,7 @@ const { createSecrets } = require('./secrets');
 const { createUpdateChecker, isReleaseUrl } = require('./updates');
 const { isKey } = require('../shared/keys');
 const { THEMES } = require('../shared/rules');
-const { LANGUAGE_NAMES, LANGUAGE_SETTINGS, createTranslator, resolveLanguage } = require('../shared/i18n');
+const { LANGUAGE_NAMES, LANGUAGE_SETTINGS, createTranslator, resolveLanguage, systemLocale } = require('../shared/i18n');
 
 const E2E = process.env.ISSUEMON_E2E === '1';
 const IS_MAC = process.platform === 'darwin';
@@ -55,7 +55,10 @@ function getClient() {
   });
 }
 
-/* ---------- theme ---------- */
+/* ---------- theme and language ---------- */
+
+/** The macOS locale that 'system' follows; only after ready. */
+const osLocale = () => systemLocale(app.getLocale(), app.getPreferredSystemLanguages());
 
 const windowBackground = () => (nativeTheme.shouldUseDarkColors ? '#1d1b19' : '#f5f2ed');
 
@@ -424,7 +427,7 @@ if (!app.requestSingleInstanceLock()) {
       hasToken: () => tokens.has(),
       setToken: value => tokens.set(value),
       notify,
-      env: { platform: process.platform, packaged: app.isPackaged, locale: app.getLocale() },
+      env: { platform: process.platform, packaged: app.isPackaged, locale: osLocale() },
       version: app.getVersion(),
       updateChecker: updates,
     });
@@ -476,7 +479,7 @@ if (!app.requestSingleInstanceLock()) {
   }).catch(err => {
     // Otherwise a process keeps running without a window or tray icon, holding the single-instance lock.
     // The tracker (and its translator) may not exist yet: then the system language decides.
-    const t = tracker?.t || createTranslator(resolveLanguage('system', app.getLocale()), app.getLocale());
+    const t = tracker?.t || createTranslator(resolveLanguage('system', osLocale()), osLocale());
     dialog.showErrorBox(t('error.startup'), err.message);
     app.exit(1);
   });

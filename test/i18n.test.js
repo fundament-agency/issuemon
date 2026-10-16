@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { LANGUAGES, LANGUAGE_NAMES, LANGUAGE_SETTINGS, resolveLanguage, localeTag, createTranslator, catalogs } = require('../src/shared/i18n');
+const { LANGUAGES, LANGUAGE_NAMES, LANGUAGE_SETTINGS, resolveLanguage, systemLocale, localeTag, createTranslator, catalogs } = require('../src/shared/i18n');
 
 test('languages: the registered catalogs in the fixed order, with native names and system as a setting', () => {
   assert.deepEqual(LANGUAGES.slice(0, 2), ['en', 'nl']);
@@ -23,6 +23,20 @@ test('resolveLanguage: a supported setting wins, otherwise the system language, 
   assert.equal(resolveLanguage('system', 'ja-JP'), 'en'); // unsupported system language
   assert.equal(resolveLanguage('system', undefined), 'en');
   assert.equal(resolveLanguage(null, ''), 'en');
+});
+
+test('systemLocale: the Chromium locale, unless macOS asks first for a language Chromium did not choose', () => {
+  assert.equal(systemLocale('en-US', ['en-US']), 'en-US');
+  assert.equal(systemLocale('en-GB', ['en-AU']), 'en-GB'); // a regional variant keeps Chromium's match
+  assert.equal(systemLocale('es-419', ['es-MX']), 'es-419');
+  assert.equal(systemLocale('nl', ['nl-NL']), 'nl');
+  assert.equal(systemLocale('en-US', ['it-IT']), 'it-IT'); // not shipped: Chromium fell back to English
+  assert.equal(systemLocale('de', ['it-IT', 'de-DE']), 'it-IT'); // not to the second macOS language
+  assert.equal(systemLocale('en-US', []), 'en-US');
+  assert.equal(systemLocale('nl'), 'nl');
+  // What the app does with it: English with en-GB dates, as for any unsupported language
+  assert.equal(resolveLanguage('system', systemLocale('de', ['it-IT', 'de-DE'])), 'en');
+  assert.equal(localeTag('en', systemLocale('en-US', ['it-IT'])), 'en-GB');
 });
 
 test('localeTag: the system locale when it matches the language, otherwise the language default', () => {

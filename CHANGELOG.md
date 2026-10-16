@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- A smaller app: it keeps Chromium's resources only for IssueMon's five languages (with British English and Latin American Spanish for regional variants), 46 MB less on disk.
+
 ## [0.1.1] - 2026-10-16
 
 ### Changed
