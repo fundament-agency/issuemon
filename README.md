@@ -168,6 +168,8 @@ Open a `.dmg` and drag `IssueMon.app` to Applications. `npm run pack` builds wit
 
 The app keeps Chromium's resources only for its own five languages, plus British English and Latin American Spanish, which macOS picks for regional variants such as en-AU or es-MX (`electronLanguages` in `package.json`). On a Mac in another language Chromium falls back to English, and so does IssueMon, with en-GB dates. `scripts/after-pack.js` also removes SwiftShader, the software Vulkan that Chromium only uses for WebGL without a GPU; IssueMon draws no WebGL, and without a GPU the window is drawn in software.
 
+Electron downloads its own files on first use (`npm start`, the tests, or `npx install-electron`); the build copies its licence notices from them and stops if they are missing.
+
 The app is *ad-hoc* signed and not notarized. Built locally, it just starts; on another Mac, macOS blocks it the first time, see *First launch*.
 
 ## Contributing and security
