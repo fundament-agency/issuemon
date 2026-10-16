@@ -501,6 +501,59 @@ test('stale: a slow older refresh does not overwrite the newest list', async t =
   assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['L-1']);
 });
 
+test('stale: settings refresh during a busy poll, and its older response cannot undo them', { timeout: 5_000 }, async t => {
+  const { jira, tracker } = await setup(t);
+  const { me, sam } = jira.people;
+  jira.addIssue({ key: 'M-1', summary: 'mine, old', assignee: me, updated: Date.now() - 30 * DAY });
+  jira.addIssue({ key: 'M-2', summary: 'mine, newer', assignee: me, updated: Date.now() - 16 * DAY });
+  jira.addIssue({ key: 'S-1', summary: 'Sam', assignee: sam, updated: Date.now() - 25 * DAY });
+  jira.addIssue({ key: 'U-1', summary: 'unassigned', updated: Date.now() - 22 * DAY });
+  const keys = () => tracker.publicState().stale.issues.map(i => i.key);
+  await tracker.check();
+  assert.deepEqual(keys(), ['M-1', 'M-2']);
+
+  // Hold a completed search, so the poll has definitely queried the old settings.
+  // No sleeps: subsequent settings refreshes must finish before this response is released.
+  const searched = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const getClient = tracker.getClient;
+  let first = true;
+  tracker.getClient = () => {
+    const client = getClient();
+    const search = client.search;
+    client.search = async (...args) => {
+      const hold = first;
+      first = false;
+      const result = await search(...args);
+      if (hold) { searched.resolve(); await release.promise; }
+      return result;
+    };
+    return client;
+  };
+  const polling = tracker.check();
+  t.after(async () => { release.resolve(); await polling; });
+  await searched.promise;
+
+  const saveAndObserve = async (patch, expected) => {
+    const refreshed = Promise.withResolvers();
+    const onChange = () => {
+      if (JSON.stringify(keys()) === JSON.stringify(expected)) refreshed.resolve();
+    };
+    tracker.on('change', onChange);
+    try {
+      tracker.saveSettings(patch);
+      await refreshed.promise;
+      assert.equal(tracker.running, polling, 'settings refresh finishes while the poll is still busy');
+    } finally { tracker.off('change', onChange); }
+  };
+  await saveAndObserve({ staleDays: 20 }, ['M-1']);
+  await saveAndObserve({ stalePeople: [me, sam].map(p => ({ accountId: p.accountId, name: p.displayName })) }, ['M-1', 'S-1']);
+  await saveAndObserve({ staleUnassigned: true }, ['M-1', 'S-1', 'U-1']);
+  release.resolve();
+  assert.equal((await polling).ok, true);
+  assert.deepEqual(keys(), ['M-1', 'S-1', 'U-1']);
+});
+
 test('stale people are normalised', async t => {
   const { tracker } = await setup(t);
   const s = tracker.saveSettings({ stalePeople: [{ accountId: ' acc-sam ', name: 'Sam' }, { accountId: 'acc-sam', name: 'duplicate' }, { name: 'no id' }, null, { accountId: 'acc-alex' }] });
