@@ -29,15 +29,17 @@ jobs:
         run: |
           set -euo pipefail
           V="${TAG#v}"
-          gh release download "$TAG" -R "${{ github.repository }}" -p "issuemon-$V-arm64.zip" -p "issuemon-$V-x64.zip"
-          ARM=$(sha256sum "issuemon-$V-arm64.zip" | cut -d' ' -f1)
-          X64=$(sha256sum "issuemon-$V-x64.zip" | cut -d' ' -f1)
+          gh release download "$TAG" -R "${{ github.repository }}" -p "issuemon-$V-arm64.tar.xz" -p "issuemon-$V-x64.tar.xz"
+          ARM=$(sha256sum "issuemon-$V-arm64.tar.xz" | cut -d' ' -f1)
+          X64=$(sha256sum "issuemon-$V-x64.tar.xz" | cut -d' ' -f1)
           # The patterns match the exact spacing in the tap's Casks/issuemon.rb:
           # `arm:   "` has three spaces after the colon, `intel: "` has one.
+          # The last one points a url that still names the .zip (0.1.1 and earlier) at the .tar.xz.
           sed -i -E \
             -e "s/^  version \".*\"/  version \"$V\"/" \
             -e "s/(arm:   \")[0-9a-f]+(\")/\1$ARM\2/" \
             -e "s/(intel: \")[0-9a-f]+(\")/\1$X64\2/" \
+            -e 's/(-#\{arch\})\.zip"/\1.tar.xz"/' \
             Casks/issuemon.rb
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
