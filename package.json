@@ -45,6 +45,7 @@
       "src/**/*",
       "package.json"
     ],
+    "afterPack": "scripts/after-pack.js",
     "directories": {
       "buildResources": "build",
       "output": "dist"
