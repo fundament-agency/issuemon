@@ -13,6 +13,7 @@ const { createMockJira, seedDemo } = require('../test/support/mock-jira');
 
 const ROOT = path.join(__dirname, '..');
 const SHOTS = path.join(__dirname, 'screenshots');
+const PACKAGED = process.env.ISSUEMON_APP ? path.resolve(ROOT, process.env.ISSUEMON_APP) : null;
 
 test('First run: connect and carry on', { timeout: 120_000 }, async t => {
   const jira = createMockJira({ email: 'e2e@example.com', token: 'e2e-token' });
@@ -35,7 +36,7 @@ test('First run: connect and carry on', { timeout: 120_000 }, async t => {
   const env = { ...process.env, ISSUEMON_E2E: '1', ISSUEMON_USER_DATA: userData, ISSUEMON_HOME: dataDir };
   delete env.ELECTRON_RUN_AS_NODE;
   delete env.ISSUEMON_TOKEN; // otherwise the token comes from the environment and the app stores nothing
-  app = await electron.launch({ executablePath: require('electron'), args: [ROOT], env });
+  app = await electron.launch({ executablePath: PACKAGED || require('electron'), args: PACKAGED ? [] : [ROOT], env });
   const page = await app.firstWindow();
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1200, 780)); // CI displays are small: force the desktop layout
   await page.waitForFunction(() => window.innerWidth > 1100);
