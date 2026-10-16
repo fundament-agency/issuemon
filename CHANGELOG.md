@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-10-16
+
 ### Changed
 
 - A smaller app: it keeps Chromium's resources only for IssueMon's five languages (with British English and Latin American Spanish for regional variants), 46 MB less on disk.
@@ -15,6 +17,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Removed
 
 - The `.zip`, `latest-mac.yml` and blockmap files from the release: IssueMon has no auto-updater, so nothing used them.
+
+### Fixed
+
+- A note or setting you are editing survives the window refreshing in the background, for example after a check: a note is no longer saved before *Esc* discards the edit, and an edited setting is still saved when you leave the field.
+- A newly tracked issue scrolls all the way into view, also when the list is redrawn while it scrolls.
 
 ## [0.1.1] - 2026-10-16
 
@@ -49,6 +56,7 @@ The first public release.
 
 - The data and token migrations from pre-release versions.
 
-[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/fundament-agency/issuemon/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/fundament-agency/issuemon/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/fundament-agency/issuemon/releases/tag/v0.1.0
