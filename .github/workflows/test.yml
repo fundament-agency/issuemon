@@ -2,7 +2,7 @@ name: Test
 
 on:
   push:
-    branches: ['**'] # every branch; a tag push runs the release workflow instead, which runs the tests itself
+    branches: [main] # pull requests are covered by the pull_request event below; a tag push runs the release workflow, which runs the tests itself
   pull_request:
 
 permissions:
