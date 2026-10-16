@@ -20,7 +20,8 @@ function setup(t, { notices = NOTICES, libraries: files = LIBRARIES } = {}) {
   fs.mkdirSync(libraries, { recursive: true });
   for (const file of notices) fs.writeFileSync(path.join(resources, file), '');
   for (const file of files) fs.writeFileSync(path.join(libraries, file), '');
-  return { context: { appOutDir, packager: { appInfo: { productFilename: 'IssueMon' } } }, libraries };
+  const extraResources = NOTICES.map(to => ({ from: `somewhere/${to}`, to }));
+  return { context: { appOutDir, packager: { appInfo: { productFilename: 'IssueMon' }, config: { extraResources } } }, libraries };
 }
 
 test('afterPack removes SwiftShader and keeps the other libraries', async t => {
@@ -34,7 +35,7 @@ test('afterPack fails when SwiftShader is not where it expects', async t => {
   await assert.rejects(afterPack(context), { code: 'ENOENT' });
 });
 
-test('afterPack fails when Electron\'s licence notices are missing, before it removes anything', async t => {
+test('afterPack fails when extraResources, such as Electron\'s licence notices, are missing, before it removes anything', async t => {
   const { context, libraries } = setup(t, { notices: ['LICENSE.txt'] });
   await assert.rejects(afterPack(context), /lacks LICENSE\.electron\.txt, LICENSES\.chromium\.html\. Run `npx install-electron` first/);
   assert.deepEqual(fs.readdirSync(libraries), LIBRARIES);
