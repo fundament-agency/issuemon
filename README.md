@@ -16,7 +16,7 @@ Tracking is separate from "watching" in Jira. The only thing IssueMon ever write
 brew install --cask fundament-agency/tap/issuemon
 ```
 
-This taps and trusts `fundament-agency/homebrew-tap` in one step. Update with `brew upgrade --cask issuemon`.
+This taps and trusts `fundament-agency/homebrew-tap` in one step. The cask removes the quarantine flag from the app, so macOS doesn't block it, also after `brew upgrade --cask issuemon`.
 
 ### Download
 
@@ -24,7 +24,7 @@ Download the `.dmg` for your Mac (`arm64` for Apple silicon, `x64` for Intel) fr
 
 ### First launch
 
-IssueMon is not notarized by Apple, so macOS blocks it once per install or upgrade. Click *Done*, open **System Settings → Privacy & Security**, scroll to "IssueMon was blocked…", click **Open Anyway** and confirm. Control-click → *Open* no longer works since macOS 15. Or remove the quarantine flag in a terminal:
+IssueMon is not notarized by Apple, so macOS blocks it once per `.dmg` install or upgrade (Homebrew removes the quarantine flag itself). Click *Done*, open **System Settings → Privacy & Security**, scroll to "IssueMon was blocked…", click **Open Anyway** and confirm. Control-click → *Open* no longer works since macOS 15. Or remove the quarantine flag in a terminal:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/IssueMon.app

@@ -57,4 +57,4 @@ For maintainers.
 
 Never replace an asset in a published release: the Homebrew cask checks the file's SHA-256, and people may already have downloaded it. If something is wrong, cut a patch release instead.
 
-The app is signed ad hoc and not notarized. On first launch, macOS asks the user to confirm in System Settings → Privacy & Security → Open Anyway. Mention this in the release notes.
+The app is signed ad hoc and not notarized. On first launch from the `.dmg`, macOS asks the user to confirm in System Settings → Privacy & Security → Open Anyway; the Homebrew cask removes the quarantine flag, so it doesn't. Mention this in the release notes.
