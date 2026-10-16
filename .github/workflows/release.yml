@@ -37,6 +37,9 @@ jobs:
 
       - run: npm test
 
+      # Electron downloads its binary, and the licence files the build copies from it, on first use.
+      - run: npx --no install-electron
+
       # Nothing is uploaded before the signatures check out, so a broken build never leaves assets on a release.
       - name: Build
         run: npx electron-builder --mac --publish never
