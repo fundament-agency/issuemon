@@ -123,12 +123,49 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await assertAddCleared();
   });
 
-  await t.test('a newly tracked issue is selected and scrolled into view', async () => {
+  await t.test('a newly tracked issue is selected and scrolled into view', async t => {
+    const windowState = await app.evaluate(({ BrowserWindow }) => {
+      const w = BrowserWindow.getAllWindows()[0];
+      return { bounds: w.getBounds(), minimum: w.getMinimumSize() };
+    });
+    const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
+    t.after(async () => {
+      // Restore the actual window state even when the scroll assertion fails.
+      await app.evaluate(({ BrowserWindow }, saved) => {
+        const w = BrowserWindow.getAllWindows()[0];
+        w.setMinimumSize(...saved.minimum);
+        w.setBounds(saved.bounds);
+        global.__issuemon.tracker.untrack('WEB-1201');
+      }, windowState);
+      await page.evaluate(() => {
+        window.__restoreRevealTest?.();
+        delete window.__restoreRevealTest;
+        delete window.__interruptedReveal;
+      });
+      await page.waitForFunction(({ width, height }) => innerWidth === width && innerHeight === height, viewport);
+      await page.waitForSelector('[data-row="WEB-1201"]', { state: 'detached' });
+    });
     // Short window: WEB-1201 is the least recently updated, so it is at the bottom and out of view
     await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setMinimumSize(380, 300); w.setSize(1200, 430); });
-    await page.waitForFunction(() => window.innerHeight <= 430);
+    await page.waitForFunction(() => window.innerWidth === 1200 && window.innerHeight === 430);
     await page.click('[data-row="WEB-1423"]');
     await page.waitForSelector('.va-row.sel[data-row="WEB-1423"]');
+    await page.evaluate(() => {
+      const original = Element.prototype.scrollIntoView;
+      window.__restoreRevealTest = () => { Element.prototype.scrollIntoView = original; };
+      Element.prototype.scrollIntoView = function (options) {
+        original.call(this, options);
+        if (this.dataset.row !== 'WEB-1201' || options?.behavior !== 'smooth') return;
+        window.__restoreRevealTest();
+        const list = this.closest('.va-rows');
+        const row = this.getBoundingClientRect(), box = list.getBoundingClientRect();
+        // Force the same full render as a state push, synchronously after starting
+        // the real native animation. Synthetic clicks do not add pointer/focus input.
+        document.querySelector('[data-action="help"]').click();
+        document.querySelector('[data-action="help-close"]').click();
+        window.__interruptedReveal = { outOfView: row.bottom > box.bottom + 1, replaced: !list.isConnected };
+      };
+    });
     await page.fill('#add-input', 'WEB-1201');
     await page.press('#add-input', 'Enter');
     await page.waitForSelector('.va-row.sel[data-row="WEB-1201"]');
@@ -141,12 +178,20 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
       return row.top >= box.top - 1 && row.bottom <= box.bottom + 1; // 1px margin for subpixel rounding
     });
     await until(inView, 'selected row in view');
-    // Re-rendering must not reset the selection
-    await page.waitForTimeout(150);
+    assert.deepEqual(await page.evaluate(() => window.__interruptedReveal), { outOfView: true, replaced: true });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    // Once revealed, manually scrolling away and re-rendering must not pin the row.
+    await page.evaluate(() => {
+      const list = document.querySelector('.va-rows');
+      list.dispatchEvent(new WheelEvent('wheel', { bubbles: true, deltaY: -500 }));
+      list.scrollTo({ top: 0, behavior: 'instant' });
+      document.querySelector('[data-action="help"]').click();
+      document.querySelector('[data-action="help-close"]').click();
+    });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await page.locator('.va-row.sel[data-row="WEB-1201"]').count(), 1);
-    await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setMinimumSize(380, 520); w.setSize(1200, 780); });
-    await page.click('.va-d [data-action="untrack"]'); // WEB-1201 does not belong here in the later tests
-    await page.waitForSelector('[data-row="WEB-1201"]', { state: 'detached' });
+    assert.equal(await page.locator('.va-rows').evaluate(el => el.scrollTop), 0);
+    assert.equal(await inView(), false);
   });
 
   await t.test('a real paste (clipboard and keyboard shortcut) tracks an issue, although the session denies permissions', async () => {

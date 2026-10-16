@@ -20,6 +20,7 @@
   let t = null; // translator for settings.language (shared/i18n.js), made in receive()
   // Optimistic updates and Undo: see actions.js. apply works on S and is laid over S again after every push from main until the call is done.
   const actions = IssuemonActions.create({ getState: () => S });
+  const rowReveal = IssuemonReveal.create();
   const UI = { view: 'changed', selected: null, detailOpen: false, addText: '', noteText: '', doneOpen: false, trackedQuery: '', peopleQuery: '', staleFilter: [], staleMenu: false, highlight: null, pendingSelect: null, reveal: null, conn: null, notifyBusy: false, updateBusy: false, updateFailed: false, draft: null, connectDraft: null, activity: {}, descOpen: {}, help: false };
   // UI.doneOpen: the Done group in Tracked is expanded; UI.trackedQuery: the text in the Tracked filter
   // UI.connectDraft: what you typed on the connect screen, { baseUrl, email, token }; survives a re-render from a state push
@@ -937,6 +938,7 @@
       } else if (dirtyFields.has(ae)) commitField(ae); // navigating away really ends the edit, including via the menu
     }
     if (UI.reveal) { const key = UI.reveal; UI.reveal = null; reveal(key); }
+    rowReveal.refresh(); // resume an unfinished native scroll on the replacement list
     const n = C.counts.changed;
     document.title = n ? t('nav.windowTitle', { n }) : 'IssueMon';
     tick();
@@ -1317,9 +1319,17 @@
 
   // Scroll the row into view and clear UI.highlight (already set) once its 2.4 s CSS animation is over, so a later render doesn't replay it.
   function reveal(key) {
-    requestAnimationFrame(() => document.querySelector(`[data-row="${CSS.escape(key)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }));
+    const view = UI.view;
+    rowReveal.reveal(() => UI.view === view && UI.selected === key ? document.querySelector(`[data-row="${CSS.escape(key)}"]`) : null);
     setTimeout(() => { if (UI.highlight === key) UI.highlight = null; }, 2400);
   }
+
+  // A reveal is a one-shot request, not a lock on the selected row. User scrolling
+  // or another interaction must not be undone by a later state push.
+  for (const type of ['wheel', 'touchstart', 'pointerdown', 'keydown']) {
+    document.addEventListener(type, rowReveal.cancel, { capture: true, passive: true });
+  }
+  window.addEventListener('resize', rowReveal.refresh);
 
   function move(delta) {
     const keys = inbox().keys;
