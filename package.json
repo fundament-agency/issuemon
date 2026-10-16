@@ -1,0 +1,94 @@
+{
+  "name": "issuemon",
+  "productName": "IssueMon",
+  "version": "0.1.0",
+  "description": "Keep an eye on Jira issues and see right away what changed.",
+  "private": true,
+  "license": "MIT",
+  "author": "Fundament (https://www.fundament.agency/)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fundament-agency/issuemon.git"
+  },
+  "homepage": "https://github.com/fundament-agency/issuemon#readme",
+  "bugs": {
+    "url": "https://github.com/fundament-agency/issuemon/issues"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "electron .",
+    "mock-jira": "node test/support/mock-jira.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "test:e2e": "node --test --test-concurrency=1 \"e2e/**/*.e2e.js\"",
+    "preversion": "npm test",
+    "icons": "electron scripts/make-icons.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder"
+  },
+  "build": {
+    "appId": "agency.fundament.issuemon",
+    "productName": "IssueMon",
+    "copyright": "Copyright © 2026 Fundament",
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "extraResources": [
+      {
+        "from": "LICENSE",
+        "to": "LICENSE.txt"
+      },
+      {
+        "from": "node_modules/electron/dist/LICENSE",
+        "to": "LICENSE.electron.txt"
+      },
+      {
+        "from": "node_modules/electron/dist/LICENSES.chromium.html",
+        "to": "LICENSES.chromium.html"
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.png",
+      "identity": "-",
+      "hardenedRuntime": false,
+      "artifactName": "${name}-${version}-${arch}.${ext}",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ]
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "fundament-agency",
+        "repo": "issuemon",
+        "releaseType": "draft"
+      }
+    ]
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3",
+    "playwright-core": "1.64.0"
+  }
+}

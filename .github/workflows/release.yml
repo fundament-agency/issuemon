@@ -1,0 +1,67 @@
+# Release flow: push a tag `vX.Y.Z` that matches the version in package.json.
+# This workflow tests the app, builds the macOS assets (arm64 and x64, dmg and
+# zip), verifies the code signatures and only then uploads the assets to a DRAFT
+# GitHub release. Nothing is public yet.
+# Review the draft, then publish it by hand on GitHub. Publishing triggers
+# update-cask.yml, which updates the Homebrew cask.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check that the tag matches package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${GITHUB_REF_NAME#v}" != "$VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $VERSION" >&2
+            exit 1
+          fi
+
+      - run: npm test
+
+      # Three e2e sub-tests are known to be flaky; one retry is allowed.
+      - run: npm run test:e2e || npm run test:e2e
+
+      # Nothing is uploaded before the signatures check out, so a broken build never leaves assets on a release.
+      # --publish never still writes latest-mac.yml next to the assets.
+      - name: Build
+        run: npx electron-builder --mac --publish never
+
+      - name: Verify the code signatures
+        run: |
+          codesign --verify --deep --strict --verbose=2 dist/mac-arm64/IssueMon.app
+          codesign --verify --deep --strict --verbose=2 dist/mac/IssueMon.app
+
+      - name: Create the draft release
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes "See CHANGELOG.md" \
+            dist/*.dmg dist/*.zip dist/*.blockmap dist/latest-mac.yml
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Keep the files even if a step above failed.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: issuemon-release
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/latest-mac.yml

@@ -1,0 +1,30 @@
+name: Test
+
+on:
+  push:
+    tags-ignore: ['v*'] # the release workflow runs the tests for a tag
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # A few e2e sub-tests are known to fail now and then without a real
+      # problem, so the suite gets one retry before the job fails.
+      - run: npm run test:e2e || npm run test:e2e
+      - name: Upload e2e screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: e2e/screenshots/

@@ -1,0 +1,8 @@
+node_modules/
+dist/
+e2e/screenshots/
+.DS_Store
+.claude/settings.local.json
+*.log
+coverage/
+.env
