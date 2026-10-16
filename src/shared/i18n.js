@@ -39,6 +39,17 @@
     return LANGUAGES.includes(code) ? code : 'en';
   }
 
+  /**
+   * The system locale for resolveLanguage and localeTag. appLocale (app.getLocale()) is the best match among the Chromium
+   * languages the app ships (electronLanguages in package.json), so a Mac in Italian gets en-US there. When macOS's first
+   * language is not the one Chromium chose, that first language counts: an unsupported one then falls back to English with
+   * en-GB dates, and never to a second macOS language.
+   */
+  function systemLocale(appLocale, preferredLanguages = []) {
+    const first = preferredLanguages[0];
+    return first && subtag(first) !== subtag(appLocale) ? first : appLocale;
+  }
+
   /** BCP 47 tag for Intl and toLocale*: the system locale when it is in this language (so en-US keeps its dates), else the language default. */
   function localeTag(language, systemLocale) {
     const tag = canonical(systemLocale);
@@ -68,5 +79,5 @@
     return t;
   }
 
-  return { LANGUAGES, LANGUAGE_NAMES, LANGUAGE_SETTINGS, resolveLanguage, localeTag, createTranslator, catalogs };
+  return { LANGUAGES, LANGUAGE_NAMES, LANGUAGE_SETTINGS, resolveLanguage, systemLocale, localeTag, createTranslator, catalogs };
 });

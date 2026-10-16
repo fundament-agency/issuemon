@@ -32,6 +32,15 @@
     "appId": "agency.fundament.issuemon",
     "productName": "IssueMon",
     "copyright": "Copyright © 2026 Fundament",
+    "electronLanguages": [
+      "en",
+      "en_GB",
+      "nl",
+      "fr",
+      "de",
+      "es",
+      "es_419"
+    ],
     "files": [
       "src/**/*",
       "package.json"
