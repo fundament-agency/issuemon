@@ -10,6 +10,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - A smaller app: it keeps Chromium's resources only for IssueMon's five languages (with British English and Latin American Spanish for regional variants), 46 MB less on disk.
 - The app no longer contains SwiftShader, Chromium's software graphics for WebGL, which IssueMon doesn't use: 16 MB less on disk.
+- Smaller downloads: Homebrew installs a 74 MB `.tar.xz` instead of a 129 MB `.zip` (Apple silicon; Intel 87 MB instead of 136 MB), and the `.dmg` is LZMA-compressed: 84 MB instead of 130 MB (Intel 99 MB instead of 136 MB).
+
+### Removed
+
+- The `.zip`, `latest-mac.yml` and blockmap files from the release: IssueMon has no auto-updater, so nothing used them.
 
 ## [0.1.1] - 2026-10-16
 

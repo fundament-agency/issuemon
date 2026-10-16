@@ -1,7 +1,7 @@
 # Release flow: push a tag `vX.Y.Z` that matches the version in package.json.
-# This workflow tests the app, builds the macOS assets (arm64 and x64, dmg and
-# zip), verifies the code signatures and only then uploads the assets to a DRAFT
-# GitHub release. Nothing is public yet.
+# This workflow tests the app, builds the macOS assets (arm64 and x64, a dmg and
+# a tar.xz for Homebrew), verifies the code signatures and the archives and only
+# then uploads the assets to a DRAFT GitHub release. Nothing is public yet.
 # Review the draft, then publish it by hand on GitHub. Publishing triggers
 # update-cask.yml, which updates the Homebrew cask.
 name: Release
@@ -40,7 +40,6 @@ jobs:
       - run: npm run test:e2e || npm run test:e2e
 
       # Nothing is uploaded before the signatures check out, so a broken build never leaves assets on a release.
-      # --publish never still writes latest-mac.yml next to the assets.
       - name: Build
         run: npx electron-builder --mac --publish never
 
@@ -49,10 +48,24 @@ jobs:
           codesign --verify --deep --strict --verbose=2 dist/mac-arm64/IssueMon.app
           codesign --verify --deep --strict --verbose=2 dist/mac/IssueMon.app
 
+      # Each tar.xz unpacked the way Homebrew does it: the app must be signed and dated (an archive without folder
+      # dates, like electron-builder's own tar.xz, unpacks as 1970). Each dmg must be LZMA-compressed.
+      - name: Verify the archives
+        run: |
+          for f in dist/*.tar.xz; do
+            d=$(mktemp -d)
+            tar --extract --no-same-owner --file "$f" --directory "$d"
+            codesign --verify --deep --strict "$d/IssueMon.app"
+            [ "$(stat -f %m "$d/IssueMon.app")" -gt 0 ] || { echo "$f: IssueMon.app has no date" >&2; exit 1; }
+          done
+          for f in dist/*.dmg; do
+            hdiutil imageinfo "$f" | grep -q '^Format: ULMO$' || { echo "$f is not LZMA-compressed" >&2; exit 1; }
+          done
+
       - name: Create the draft release
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes "See CHANGELOG.md" \
-            dist/*.dmg dist/*.zip dist/*.blockmap dist/latest-mac.yml
+            dist/*.dmg dist/*.tar.xz
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -63,5 +76,4 @@ jobs:
           name: issuemon-release
           path: |
             dist/*.dmg
-            dist/*.zip
-            dist/latest-mac.yml
+            dist/*.tar.xz
