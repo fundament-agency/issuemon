@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- An edited comment now shows up in *Changed*, with a notification: "Sam edited a comment", with the new text, marked word by word when IssueMon saw the old text. Each edit counts once.
+
 ## [0.1.2] - 2026-10-16
 
 ### Changed

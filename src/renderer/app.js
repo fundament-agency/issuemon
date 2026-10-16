@@ -143,12 +143,14 @@
   /** The short sentence for the subline of a quiet row, such as "You commented" or "Sam set it to Done". */
   const chShort = c => shortLine(c, { me: S.me?.name, authorIsMe: !!c.own || isMe(c.author), t });
 
-  // Summary of pending changes as chips: comments counted, per field only the newest.
+  // Summary of pending changes as chips: new and edited comments counted apart, per field only the newest.
   function changeChips(cs) {
     const seen = new Set();
     const out = [];
-    const comments = cs.filter(c => c.field === 'comment').length;
+    const comments = cs.filter(c => c.field === 'comment' && !c.edited).length;
+    const edited = new Set(cs.filter(c => c.field === 'comment' && c.edited).map(c => String(c.id).split('@')[0])).size; // per comment, however often edited
     if (comments) out.push(`<span class="chip">${icon('msg')}${esc(t('row.comments', { n: comments }))}</span>`);
+    if (edited) out.push(`<span class="chip">${icon('msg')}${esc(t('row.commentsEdited', { n: edited }))}</span>`);
     for (const c of [...cs].sort(byNewest)) {
       const k = c.field === 'other' ? `other:${c.label}` : c.field;
       if (c.field === 'comment' || seen.has(k)) continue;
@@ -171,7 +173,7 @@
     if (last) return `${esc(words.slice(0, DIFF_KEEP).join(''))}${gap}`;
     return `${esc(words.slice(0, DIFF_KEEP).join(''))}${gap} ${esc(words.slice(-DIFF_KEEP).join(''))}`;
   }
-  /** Description: marked word by word; if nothing is shared, the old and new text one below the other; only whitespace changed gets a note. */
+  /** Description (and an edited comment whose old text is known): marked word by word; if nothing is shared, the old and new text one below the other; only whitespace changed gets a note. */
   function descDiffHtml(from, to) {
     const parts = wordDiff(from || '', to || '');
     if (parts.length && parts.every(p => p.type === 'same' || !p.text.trim())) return `<p class="va-note muted">${esc(t('detail.diffWhitespace'))}</p>`;
@@ -198,7 +200,10 @@
     const who = `<b>${esc(c.author?.name || t('person.someone'))}</b>`;
     const from = c.from ? `<span class="from">${esc(clip(c.from, 120))}</span>` : '';
     switch (c.field) {
-      case 'comment': return [t('change.timeline.comment', { who }), `<blockquote>${esc(c.to)}</blockquote>`];
+      case 'comment':
+        if (!c.edited) return [t('change.timeline.comment', { who }), `<blockquote>${esc(c.to)}</blockquote>`];
+        // An edit: word by word when IssueMon recorded the old text, else just the new text
+        return [t('change.timeline.commentEdited', { who }), c.from != null ? descDiffCached(c) : `<blockquote>${esc(c.to)}</blockquote>`];
       case 'description': return [t('change.timeline.description', { who }), descDiffCached(c)];
       case 'attachment': return [c.to
         ? t('change.timeline.attachmentAdded', { who, name: `<b>${esc(c.to)}</b>` })

@@ -33,12 +33,14 @@
   'change.empty': 'vacío',
   'change.describe.assignedToYou': '{who} · Asignada a ti',
   'change.describe.comment': '{who}: «{text}»',
+  'change.describe.commentEdited': '{who} editó un comentario: «{text}»',
   'change.describe.description': '{who} editó la descripción',
   'change.describe.attachmentAdded': '{who} añadió {name}',
   'change.describe.attachmentRemoved': '{who} eliminó {name}',
   'change.describe.attachmentRemovedUnnamed': '{who} eliminó un adjunto',
   'change.describe.field': '{who} · {field}: {from} → {to}',
   'change.short.comment': '{who} comentó',
+  'change.short.commentEdited': '{who} editó un comentario',
   'change.short.status': '{who} la pasó a {to}',
   'change.short.assignedToYou': '{who} te la asignó',
   'change.short.assigned': '{who} la asignó a {to}',
@@ -51,6 +53,7 @@
   'change.short.field': '{who} cambió el campo {field}',
   // The same sentences with you as the author
   'change.short.mine.comment': 'Comentaste',
+  'change.short.mine.commentEdited': 'Editaste un comentario',
   'change.short.mine.status': 'La pasaste a {to}',
   'change.short.mine.assignedToYou': 'Te la asignaste',
   'change.short.mine.assigned': 'La asignaste a {to}',
@@ -233,6 +236,7 @@
 
   // One row in a list
   'row.comments': { one: '{n} comentario', other: '{n} comentarios' },
+  'row.commentsEdited': { one: '{n} comentario editado', other: '{n} comentarios editados' },
   'row.loading': 'cargando…',
   'row.notFetched': 'Aún no obtenida',
   'row.untrackLabel': 'Dejar de seguir {key}',
@@ -274,6 +278,7 @@
 
   // Timeline of changes: {who}, {from}, {to} and {name} are HTML, escaped by the caller (app.js chHtml)
   'change.timeline.comment': '{who} comentó',
+  'change.timeline.commentEdited': '{who} editó un comentario',
   'change.timeline.description': '{who} editó la descripción',
   'change.timeline.attachmentAdded': '{who} añadió {name}',
   'change.timeline.attachmentRemoved': '{who} eliminó el adjunto {name}',

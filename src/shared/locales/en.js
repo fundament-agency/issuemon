@@ -33,12 +33,14 @@
   'change.empty': 'empty',
   'change.describe.assignedToYou': '{who} · Assigned to you',
   'change.describe.comment': '{who}: “{text}”',
+  'change.describe.commentEdited': '{who} edited a comment: “{text}”',
   'change.describe.description': '{who} edited the description',
   'change.describe.attachmentAdded': '{who} added {name}',
   'change.describe.attachmentRemoved': '{who} removed {name}',
   'change.describe.attachmentRemovedUnnamed': '{who} removed an attachment',
   'change.describe.field': '{who} · {field}: {from} → {to}',
   'change.short.comment': '{who} commented',
+  'change.short.commentEdited': '{who} edited a comment',
   'change.short.status': '{who} set it to {to}',
   'change.short.assignedToYou': '{who} assigned it to you',
   'change.short.assigned': '{who} assigned it to {to}',
@@ -51,6 +53,7 @@
   'change.short.field': '{who} changed {field}',
   // The same sentences with you as the author
   'change.short.mine.comment': 'You commented',
+  'change.short.mine.commentEdited': 'You edited a comment',
   'change.short.mine.status': 'You set it to {to}',
   'change.short.mine.assignedToYou': 'You assigned it to yourself',
   'change.short.mine.assigned': 'You assigned it to {to}',
@@ -234,6 +237,7 @@
 
   // One row in a list
   'row.comments': { one: '{n} comment', other: '{n} comments' },
+  'row.commentsEdited': { one: '{n} comment edited', other: '{n} comments edited' },
   'row.loading': 'loading…',
   'row.notFetched': 'Not fetched yet',
   'row.untrackLabel': 'Stop tracking {key}',
@@ -275,6 +279,7 @@
 
   // Timeline of changes: {who}, {from}, {to} and {name} are HTML, escaped by the caller (app.js chHtml)
   'change.timeline.comment': '{who} commented',
+  'change.timeline.commentEdited': '{who} edited a comment',
   'change.timeline.description': '{who} edited the description',
   'change.timeline.attachmentAdded': '{who} added {name}',
   'change.timeline.attachmentRemoved': '{who} removed attachment {name}',

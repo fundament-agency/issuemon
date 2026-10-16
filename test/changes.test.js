@@ -101,6 +101,55 @@ test('changesFromComments converts ADF to text', () => {
   assert.equal(out[0].to, 'Hi @Sam');
 });
 
+test('changesFromComments: an edit after "since" to an older comment is one change, by the editor, with the new text', () => {
+  const sam = { accountId: 'a2', displayName: 'Sam' };
+  const since = Date.UTC(2026, 9, 2);
+  const edited = {
+    id: '56', author, updateAuthor: sam, created: '2026-10-01T10:00:00.000+0000', updated: '2026-10-03T09:30:00.000+0000', body: 'Legal approved the text, can ship.',
+  };
+  const out = changesFromComments([edited], since, new Map([['56', 'Waiting for the legal check.']]));
+  assert.deepEqual(out, [{
+    id: `c56@${Date.UTC(2026, 9, 3, 9, 30)}`, at: Date.UTC(2026, 9, 3, 9, 30), author: { accountId: 'a2', name: 'Sam' }, field: 'comment', label: 'Comment',
+    edited: true, from: 'Waiting for the legal check.', to: 'Legal approved the text, can ship.',
+  }]);
+  // Without the old text, only the new one
+  assert.equal(changesFromComments([edited], since)[0].from, null);
+  // Without an updateAuthor the author edited it
+  assert.deepEqual(changesFromComments([{ ...edited, updateAuthor: undefined }], since)[0].author, { accountId: 'a1', name: 'Alex' });
+});
+
+test('changesFromComments: an edit before "since" gives nothing', () => {
+  const out = changesFromComments([{ id: '56', author, created: '2026-10-01T10:00:00.000+0000', updated: '2026-10-01T12:00:00.000+0000', body: 'x' }], Date.UTC(2026, 9, 2));
+  assert.deepEqual(out, []);
+});
+
+test('changesFromComments: a comment created and edited after "since" is one new comment with its latest text', () => {
+  const out = changesFromComments([{ id: '57', author, created: '2026-10-03T10:00:00.000+0000', updated: '2026-10-03T11:00:00.000+0000', body: 'Latest text' }], Date.UTC(2026, 9, 2));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, 'c57');
+  assert.equal(out[0].at, Date.UTC(2026, 9, 3, 10));
+  assert.equal(out[0].to, 'Latest text');
+  assert.ok(!out[0].edited);
+});
+
+test('changesFromComments: an edit that leaves the text as IssueMon saw it gives nothing', () => {
+  const comment = { id: '56', author, created: '2026-10-01T10:00:00.000+0000', updated: '2026-10-03T09:30:00.000+0000', body: 'Same text' };
+  assert.deepEqual(changesFromComments([comment], Date.UTC(2026, 9, 2), new Map([['56', 'Same text']])), []);
+});
+
+test('changesFromComments: a comment created after "since" that IssueMon already saw counts only when edited', () => {
+  // Created after the issue's last seen update but already recorded, e.g. during the previous check
+  const since = Date.UTC(2026, 9, 2);
+  const comment = { id: '58', author, created: '2026-10-03T10:00:00.000+0000', updated: '2026-10-03T10:00:00.000+0000', body: 'First text' };
+  assert.deepEqual(changesFromComments([comment], since, new Map([['58', 'First text']])), []);
+  const out = changesFromComments([{ ...comment, updated: '2026-10-03T11:00:00.000+0000', body: 'Second text' }], since, new Map([['58', 'First text']]));
+  assert.equal(out.length, 1);
+  assert.equal(out[0].id, `c58@${Date.UTC(2026, 9, 3, 11)}`);
+  assert.equal(out[0].edited, true);
+  assert.equal(out[0].from, 'First text');
+  assert.equal(out[0].to, 'Second text');
+});
+
 test('adfToText: paragraphs, lists and line breaks', () => {
   const doc = {
     type: 'doc',

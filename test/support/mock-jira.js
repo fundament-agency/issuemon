@@ -98,6 +98,16 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     return i;
   }
 
+  /** Edits a comment, as Jira does: new body, `updated` and `updateAuthor` on the comment, and `updated` on the issue. */
+  function editComment(key, commentId, text, author = people.alex, at = now()) {
+    const i = get(key);
+    const c = i.comments.find(x => x.id === String(commentId));
+    if (!c) throw new Error(`Mock: unknown comment ${commentId} on ${key}`);
+    Object.assign(c, { body: adf(text), updated: at, updateAuthor: author });
+    i.fields.updated = at;
+    return i;
+  }
+
   /** Random change, for the demo. */
   function randomChange(key) {
     const i = key ? get(key) : [...issues.values()][Math.floor(Math.random() * issues.size)];
@@ -270,6 +280,7 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     addIssue,
     change,
     comment,
+    editComment,
     randomChange,
     remove: key => issues.delete(key),
     get url() { return `http://127.0.0.1:${server.address().port}`; },

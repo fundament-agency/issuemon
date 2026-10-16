@@ -34,12 +34,14 @@
   'change.empty': 'leer',
   'change.describe.assignedToYou': '{who} · Dir zugewiesen',
   'change.describe.comment': '{who}: „{text}“',
+  'change.describe.commentEdited': '{who} hat einen Kommentar bearbeitet: „{text}“',
   'change.describe.description': '{who} hat die Beschreibung bearbeitet',
   'change.describe.attachmentAdded': '{who} hat {name} hinzugefügt',
   'change.describe.attachmentRemoved': '{who} hat {name} entfernt',
   'change.describe.attachmentRemovedUnnamed': '{who} hat einen Anhang entfernt',
   'change.describe.field': '{who} · {field}: {from} → {to}',
   'change.short.comment': '{who} hat kommentiert',
+  'change.short.commentEdited': '{who} hat einen Kommentar bearbeitet',
   'change.short.status': '{who} hat es auf {to} gesetzt',
   'change.short.assignedToYou': '{who} hat es dir zugewiesen',
   'change.short.assigned': '{who} hat es {to} zugewiesen',
@@ -51,6 +53,7 @@
   'change.short.attachmentRemoved': '{who} hat einen Anhang entfernt',
   'change.short.field': '{who} hat das Feld {field} geändert',
   'change.short.mine.comment': 'Du hast kommentiert',
+  'change.short.mine.commentEdited': 'Du hast einen Kommentar bearbeitet',
   'change.short.mine.status': 'Du hast es auf {to} gesetzt',
   'change.short.mine.assignedToYou': 'Du hast es dir selbst zugewiesen',
   'change.short.mine.assigned': 'Du hast es {to} zugewiesen',
@@ -233,6 +236,7 @@
 
   // One row in a list
   'row.comments': { one: '{n} Kommentar', other: '{n} Kommentare' },
+  'row.commentsEdited': { one: '{n} Kommentar bearbeitet', other: '{n} Kommentare bearbeitet' },
   'row.loading': 'wird geladen…',
   'row.notFetched': 'Noch nicht abgerufen',
   'row.untrackLabel': '{key} nicht mehr verfolgen',
@@ -274,6 +278,7 @@
 
   // Timeline of changes
   'change.timeline.comment': '{who} hat kommentiert',
+  'change.timeline.commentEdited': '{who} hat einen Kommentar bearbeitet',
   'change.timeline.description': '{who} hat die Beschreibung bearbeitet',
   'change.timeline.attachmentAdded': '{who} hat {name} hinzugefügt',
   'change.timeline.attachmentRemoved': '{who} hat den Anhang {name} entfernt',

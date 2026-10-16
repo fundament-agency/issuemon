@@ -32,12 +32,14 @@
   'change.empty': 'leeg',
   'change.describe.assignedToYou': '{who} · Toegewezen aan jou',
   'change.describe.comment': '{who}: “{text}”',
+  'change.describe.commentEdited': '{who} paste een reactie aan: “{text}”',
   'change.describe.description': '{who} paste de beschrijving aan',
   'change.describe.attachmentAdded': '{who} voegde {name} toe',
   'change.describe.attachmentRemoved': '{who} verwijderde {name}',
   'change.describe.attachmentRemovedUnnamed': '{who} verwijderde een bijlage',
   'change.describe.field': '{who} · {field}: {from} → {to}',
   'change.short.comment': '{who} reageerde',
+  'change.short.commentEdited': '{who} paste een reactie aan',
   'change.short.status': '{who} zette op {to}',
   'change.short.assignedToYou': '{who} wees toe aan jou',
   'change.short.assigned': '{who} wees toe aan {to}',
@@ -49,6 +51,7 @@
   'change.short.attachmentRemoved': '{who} verwijderde een bijlage',
   'change.short.field': '{who} wijzigde {field}',
   'change.short.mine.comment': 'Jij reageerde',
+  'change.short.mine.commentEdited': 'Jij paste een reactie aan',
   'change.short.mine.status': 'Jij zette op {to}',
   'change.short.mine.assignedToYou': 'Jij wees het aan jezelf toe',
   'change.short.mine.assigned': 'Jij wees toe aan {to}',
@@ -231,6 +234,7 @@
 
   // One row in a list
   'row.comments': { one: '{n} reactie', other: '{n} reacties' },
+  'row.commentsEdited': { one: '{n} reactie aangepast', other: '{n} reacties aangepast' },
   'row.loading': 'ophalen…',
   'row.notFetched': 'Nog niet opgehaald',
   'row.untrackLabel': 'Stop met tracken {key}',
@@ -272,6 +276,7 @@
 
   // Timeline of changes
   'change.timeline.comment': '{who} reageerde',
+  'change.timeline.commentEdited': '{who} paste een reactie aan',
   'change.timeline.description': '{who} paste de beschrijving aan',
   'change.timeline.attachmentAdded': '{who} voegde {name} toe',
   'change.timeline.attachmentRemoved': '{who} verwijderde bijlage {name}',

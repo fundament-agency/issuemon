@@ -38,7 +38,7 @@
     const who = c.author?.name || t('person.someone');
     if (assignedToMe(c, me)) return t('change.describe.assignedToYou', { who });
     switch (c.field) {
-      case 'comment': return t('change.describe.comment', { who, text: clip(String(c.to || '').replace(/\s+/g, ' '), 110) });
+      case 'comment': return t(c.edited ? 'change.describe.commentEdited' : 'change.describe.comment', { who, text: clip(String(c.to || '').replace(/\s+/g, ' '), 110) });
       case 'description': return t('change.describe.description', { who });
       case 'attachment':
         if (c.to) return t('change.describe.attachmentAdded', { who, name: c.to });
@@ -56,7 +56,7 @@
     const to = clip(c.to || t('change.empty'), 24);
     let what;
     switch (c.field) {
-      case 'comment': what = 'comment'; break;
+      case 'comment': what = c.edited ? 'commentEdited' : 'comment'; break;
       case 'status': what = 'status'; break;
       case 'assignee': what = !c.to ? 'unassigned' : assignedToMe(c, me) ? 'assignedToYou' : 'assigned'; break;
       case 'priority': what = 'priority'; break;
