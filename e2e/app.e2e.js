@@ -474,13 +474,23 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
 
     // Order: dragging by the grip, and ⌥↑ / ⌥↓ in the text field
     const order = async () => (await notes()).map(n => n.id);
-    const grip = await page.locator(`#note-grip-${typo.id}`).boundingBox();
-    const below = await page.locator(`#note-${cookie.id}`).boundingBox();
+    const box = async selector => { // the list re-renders after every change: wait until the element is back and laid out
+      const loc = page.locator(selector);
+      await loc.waitFor({ state: 'visible' });
+      let b = null;
+      await until(async () => (b = await loc.boundingBox()) !== null, `${selector} laid out`);
+      return b;
+    };
     await page.hover(`#note-${typo.id}`);
+    const grip = await box(`#note-grip-${typo.id}`);
+    const below = await box(`#note-${cookie.id}`);
     await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
     await page.mouse.down();
-    await page.mouse.move(grip.x + grip.width / 2, below.y + below.height, { steps: 6 });
-    await page.mouse.up();
+    try {
+      await page.mouse.move(grip.x + grip.width / 2, below.y + below.height, { steps: 6 });
+    } finally {
+      await page.mouse.up(); // never leave the button down: every later test would be stuck in a drag
+    }
     await until(async () => (await order()).join() === [cookie.id, typo.id].join(), 'dragged down');
     await page.focus(`#note-${typo.id}`);
     await page.keyboard.press('Alt+ArrowUp');
