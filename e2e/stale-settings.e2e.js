@@ -47,7 +47,7 @@ test('stale settings: background renders preserve edits until blur, then refresh
   });
 
   const settings = () => page.evaluate(() => window.issuemon.getState()).then(s => s.settings);
-  const saves = name => app.evaluate(key => global.__settingsSaves.filter(p => key in p), name);
+  const saves = name => app.evaluate((_, key) => global.__settingsSaves.filter(p => key in p), name);
   const backgroundRender = async () => {
     await page.evaluate(() => {
       window.__settingsRendered = new Promise(resolve => {
