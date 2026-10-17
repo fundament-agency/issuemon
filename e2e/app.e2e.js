@@ -953,9 +953,15 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await page.waitForSelector(row, { state: 'detached' });
   });
 
-  await t.test('notifications lead with assignments and summarize actionable issue counts', async () => {
+  await t.test('notifications lead with assignments and summarize actionable issue counts', async t => {
     const { me, sam } = jira.people;
     const keys = ['RANK-1', 'RANK-2', 'RANK-3', 'RANK-4'];
+    t.after(async () => {
+      await app.evaluate((_, keys) => {
+        for (const key of keys) global.__issuemon.tracker.untrack(key);
+      }, keys);
+      for (const key of keys) jira.issues.delete(key);
+    });
     const at = Date.now();
     for (const key of keys) jira.addIssue({ key, summary: `Notification ranking ${key}`, updated: at - 60_000 });
     await page.fill('#add-input', keys.join(' '));
@@ -988,6 +994,8 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     assert.deepEqual((await notifications()).slice(before).map(n => [n.title, n.body, n.key]), [
       ['4 issues changed · 1 assigned to you · 2 mention you', 'RANK-3, RANK-2, RANK-1, RANK-4', null],
     ]);
+    // Notifications arrive before the renderer's separate state push. Wait for all rows.
+    await until(async () => (await page.locator('.va-row[data-row^="RANK-"]').count()) === 4, 'all ranking rows rendered');
     // Changed retains time order, independently of notification importance.
     const order = await page.locator('.va-row').evaluateAll(rows => rows.map(r => r.dataset.row).filter(k => k.startsWith('RANK-')));
     assert.deepEqual(order, ['RANK-1', 'RANK-2', 'RANK-3', 'RANK-4']);
