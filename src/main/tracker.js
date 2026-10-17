@@ -274,6 +274,9 @@ class Tracker extends EventEmitter {
         if (gen === this.credentialsGen) {
           this.store.save();
           this.schedule(delay);
+        } else if (this.configured() && (this.nextCheck == null || this.nextCheck <= this.now())) {
+          // The reconnect timer may have fired while this older check was still running.
+          this.schedule(1_000);
         }
         if (this.rewordAfterRun) {
           this.rewordAfterRun = false;
