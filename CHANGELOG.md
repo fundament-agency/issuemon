@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - A date in a description or comment that is not a millisecond timestamp, such as `2026-10-17` written through the REST API, no longer stops every check ("Invalid time value"). It shows as written, and a valid timestamp still shows as `YYYY-MM-DD`. Other unusual nodes in a description or comment no longer stop a check either (#43).
 - Texts that IssueMon shortens (chips, the short line of a row, notifications, the timeline, the menu bar list, notes and long descriptions) are cut between characters as you see them, so an emoji, a combined emoji such as 👩‍💻 or a flag at the cut is no longer split in half. An avatar skips a name part without a letter, such as a status emoji, so "🌴 Sam Rivera" is *SR*; a name without any letter shows its first character whole (#46).
+- Pasting a Jira link no longer adds a bogus issue key: a sandbox or numbered site name (`acme-sandbox-952.atlassian.net` gave `SANDBOX-952`) and a comment link (`#comment-10234` gave `COMMENT-10234`) are ignored. In a link only the key at the end of the path and `selectedIssue` count, not the host, other parameters such as `jql`, or the fragment (#45).
 
 ## [0.3.0] - 2026-10-17
 
