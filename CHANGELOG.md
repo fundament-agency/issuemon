@@ -9,6 +9,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 
 - A property-based fuzzer for contributors: `npm run fuzz` tests the shared modules, the window's HTML and the tracker against the mock Jira with random, seeded inputs, including network failures, Jira changing during a check and a switch between two sites. It shrinks a failure to a small case with a replay command. Its first findings are issues #40–#46.
+- Linux support: each release has an AppImage for x64 (`issuemon-<version>-linux-x86_64.AppImage`) that starts without installation or `libfuse2`. Closing the window keeps IssueMon checking, with a tray icon where the desktop shows one; *Start at login* writes an XDG autostart entry that starts it hidden. Shortcut labels say Ctrl and Alt instead of ⌘ and ⌥, GNOME Keyring and KWallet never ask to be unlocked, and the e2e tests also run on Linux, under `xvfb-run`.
 
 ## [0.2.0] - 2026-10-17
 

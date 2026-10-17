@@ -3,7 +3,8 @@
  * All data comes from the main process via window.issuemon; only UI state lives here.
  * Keys: j/k or ↑/↓ browse, e = processed, o = open in Jira, u = stop tracking, / or ⌘K = paste field,
  * ⌘Z = undo, ⌥↑/⌥↓ = move a note, ? = shortcut overview, Esc = back or close. The menu accelerators in main
- * (⌘1–⌘4, ⌘, and ⌘L, plus ⌘Z from the menu) arrive via onCommand; ⌘R is handled in main itself. */
+ * (⌘1–⌘4, ⌘, and ⌘L, plus ⌘Z from the menu) arrive via onCommand; ⌘R is handled in main itself. Outside macOS ⌘ is Ctrl
+ * and ⌥ is Alt, also in the labels (MOD, ALT). */
 (() => {
   const api = window.issuemon;
   const { parseKeys } = window.IssuemonKeys;
@@ -13,6 +14,8 @@
   const { NOTE_MAX, INTERVALS, THEMES, noteText, projectKey, notesProjectOf, isConfigured, defaultIssueType } = window.IssuemonRules;
   const { LANGUAGES, LANGUAGE_NAMES, LANGUAGE_SETTINGS, createTranslator, resolveLanguage } = window.IssuemonI18n;
   document.documentElement.classList.add(`platform-${api.platform}`);
+  const MAC = api.platform === 'darwin';
+  const MOD = MAC ? '⌘' : 'Ctrl+', ALT = MAC ? '⌥' : 'Alt+'; // how this platform writes the modifier keys in shortcut labels
   const MIN = 60e3, HOUR = 60 * MIN, DAY = 24 * HOUR;
   const $ = sel => document.querySelector(sel);
 
@@ -364,14 +367,14 @@
     [['e'], () => t('help.processed')],
     [['o'], () => t('detail.openInJira')],
     [['u'], () => t('detail.untrack')],
-    [['/', '⌘K'], () => t('help.paste'), () => t('help.or')],
-    [['⌘L'], () => t('help.viaMenu')],
-    [['⌘R'], () => t('sync.checkNow')],
-    [['⌘1', '⌘4'], () => ['nav.changed', 'nav.tracked', 'nav.stale', 'nav.notes'].map(k => t(k)).join(', '), () => '–'],
-    [['⌘,'], () => t('nav.settings')],
-    [['⌘Z'], () => t('toast.undo')],
+    [['/', `${MOD}K`], () => t('help.paste'), () => t('help.or')],
+    [[`${MOD}L`], () => t('help.viaMenu')],
+    [[`${MOD}R`], () => t('sync.checkNow')],
+    [[`${MOD}1`, `${MOD}4`], () => ['nav.changed', 'nav.tracked', 'nav.stale', 'nav.notes'].map(k => t(k)).join(', '), () => '–'],
+    [[`${MOD},`], () => t('nav.settings')],
+    [[`${MOD}Z`], () => t('toast.undo')],
     [['Esc'], () => t('help.back')],
-    [['⌥↑', '⌥↓'], () => t('help.moveNote')],
+    [[`${ALT}↑`, `${ALT}↓`], () => t('help.moveNote')],
     [['?'], () => t('help.thisList')],
   ];
 
@@ -403,7 +406,7 @@
       : `<div class="va-sync-txt"><span class="live ${checking ? 'busy' : ''}"></span><span>${checking ? esc(t('sync.checking')) : t('sync.checked', { when: syncLast() })}</span></div>`}
       ${st.nextCheck && !checking ? `<div class="va-sync-txt muted"><span>${t(st.state === 'error' ? 'sync.nextRetry' : 'sync.nextCheck', { time: NEXT })}</span></div>` : ''}
       <div class="va-sync-btns">
-        <button class="btn sm" data-action="check" title="${esc(t('sync.checkNow'))} (⌘R)" ${checking ? 'disabled' : ''}>${icon('refresh', checking ? 'spin' : '')}<span>${esc(t('sync.checkNow'))}</span></button>
+        <button class="btn sm" data-action="check" title="${esc(t('sync.checkNow'))} (${MOD}R)" ${checking ? 'disabled' : ''}>${icon('refresh', checking ? 'spin' : '')}<span>${esc(t('sync.checkNow'))}</span></button>
         <button class="btn sm icon ghost" data-action="help" title="${esc(t('help.title'))} (?)" aria-label="${esc(t('help.title'))}">?</button>
       </div>`;
   }
@@ -716,7 +719,7 @@
     const id = esc(n.id);
     const draft = UI.draft?.id === n.id && !n.done ? UI.draft : null;
     return `<li class="note ${n.done ? 'done' : ''} ${draft || busy ? 'open' : ''}">
-      <button id="note-grip-${id}" class="note-grip" type="button" data-note-grip data-id="${id}" title="${esc(t('notes.gripTitle', { up: '⌥↑', down: '⌥↓' }))}" aria-label="${esc(t('notes.move'))}">${icon('grip')}</button>
+      <button id="note-grip-${id}" class="note-grip" type="button" data-note-grip data-id="${id}" title="${esc(t('notes.gripTitle', { up: `${ALT}↑`, down: `${ALT}↓` }))}" aria-label="${esc(t('notes.move'))}">${icon('grip')}</button>
       <input id="note-done-${id}" class="note-check" type="checkbox" data-note-done data-id="${id}" title="${esc(t(n.done ? 'notes.reopen' : 'notes.tickOff'))}" aria-label="${esc(t('notes.done'))}" ${n.done ? 'checked' : ''} ${busy ? 'disabled' : ''}>
       <textarea id="note-${id}" class="note-text" rows="1" data-note-text data-id="${id}" maxlength="${NOTE_MAX}" autocomplete="off" title="${esc(t('notes.editTitle'))}" aria-label="${esc(t('notes.note'))}" ${busy ? 'readonly' : ''}>${esc(n.text)}</textarea>
       <time class="note-time" title="${fmtTime(n.createdAt)}">${relShort(n.createdAt)}</time>
@@ -756,7 +759,7 @@
     if (!r) return '';
     if (r.ok === true) return `<span class="conn ok">${icon('check')} ${esc(t('settings.notifyShown', { when: rel(r.at) }))}</span>`;
     if (r.ok === false) return `<span class="conn err">${icon('x')} ${esc(t('settings.notifyFailed', { error: r.error || t('settings.notifyUnknownError') }))}</span>`;
-    return `<span class="conn">${t('settings.notifyNoAnswer', { allow: `<b>${esc(t('settings.notifyAllow'))}</b>` })}</span>`;
+    return `<span class="conn">${esc(t('settings.notifyNoAnswer'))}${MAC ? ` ${t('settings.notifyNoAnswerMac', { allow: `<b>${esc(t('settings.notifyAllow'))}</b>` })}` : ''}</span>`;
   }
 
   /** Settings → About: what the last update check found. Only the version that is available is a link. */
@@ -877,7 +880,7 @@
           <p class="about-version">${esc(t('settings.aboutVersion', { version: S.version }))}</p>
           <label class="check"><input id="set-checkUpdates" type="checkbox" data-setting="checkUpdates" ${s.checkUpdates ? 'checked' : ''}> ${esc(t('settings.checkUpdates'))}</label>
           <div class="set-row"><button type="button" class="btn" data-action="check-updates" ${UI.updateBusy ? 'disabled' : ''}>${esc(t('updates.checkNow'))}</button><span id="update-status" role="status">${updateStatusHtml()}</span></div>
-          ${S.updates?.newer ? `<small>${t('updates.homebrew', { command: '<code>brew upgrade --cask issuemon</code>' })}</small>` : ''}
+          ${S.updates?.newer && MAC ? `<small>${t('updates.homebrew', { command: '<code>brew upgrade --cask issuemon</code>' })}</small>` : ''}
         </fieldset>
       </div>
     </div>`;

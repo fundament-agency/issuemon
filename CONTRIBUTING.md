@@ -33,6 +33,7 @@ npm run fuzz      # property-based fuzzer, random seeded inputs (not part of npm
 - Unit and e2e tests run against the mock Jira in `test/support/mock-jira.js`. A new Jira field or endpoint goes in there too.
 - The e2e test writes screenshots to `e2e/screenshots/`. Open them to see the interface without launching the app yourself.
 - A full e2e run takes one to two minutes. A sub-test that gets stuck ends at the 180 s timeout, so allow for that in any command timeout.
+- On Linux, run the e2e tests in a virtual display: `xvfb-run -a npm run test:e2e` (on Debian or Ubuntu, `sudo apt install xvfb` first). The tests start Electron on X11 (`e2e/launch.js`), because under native Wayland Playwright's element screenshots hang. On the desktop itself, a blanked screen slows Electron down to about one frame a second until sub-tests time out.
 - A few e2e sub-tests are occasionally flaky. If one fails, run the suite once more before you start investigating.
 
 ## Conventions
@@ -52,7 +53,7 @@ For maintainers.
 1. Update `CHANGELOG.md`: move the entries from *Unreleased* to the new version with its date, and commit it. `npm version` refuses to run on a dirty working tree.
 2. Run `npm version minor` (or `patch`). The `preversion` script runs `npm test`, then npm bumps the version in `package.json`, commits and tags `vX.Y.Z`. The first release is the exception: `package.json` is already at 0.1.0, so tag it by hand with `git tag -a v0.1.0 -m v0.1.0`.
 3. Push the commit and the tag: `git push --follow-tags`.
-4. The release workflow runs the unit tests, builds the macOS app for arm64 and x64 (signed ad hoc) as a `.dmg` and a `.tar.xz`, verifies the code signatures and the archives, runs the e2e tests against the built Apple silicon app and only then creates a **draft** GitHub release with the assets, using the GitHub CLI. A broken signature or archive, or a failing test, stops the workflow before anything is uploaded.
+4. The release workflow builds the Linux AppImage (x64) and runs the e2e tests against it. It then runs the unit tests, builds the macOS app for arm64 and x64 (signed ad hoc) as a `.dmg` and a `.tar.xz`, verifies the code signatures and the archives, runs the e2e tests against the built Apple silicon app and only then creates a **draft** GitHub release with the assets of both platforms, using the GitHub CLI. A broken signature or archive, or a failing test on either platform, stops the workflow before anything is uploaded.
 5. Write the release notes on the draft and publish it by hand.
 6. Publishing triggers the workflow that updates the Homebrew cask in `fundament-agency/homebrew-tap`.
 

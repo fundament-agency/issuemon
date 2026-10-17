@@ -8,9 +8,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { _electron: electron } = require('playwright-core');
 const { createMockJira, seedDemo } = require('../test/support/mock-jira');
-
-const ROOT = path.join(__dirname, '..');
-const PACKAGED = process.env.ISSUEMON_APP ? path.resolve(ROOT, process.env.ISSUEMON_APP) : null;
+const { launchOptions } = require('./launch');
 
 test('stale settings: background renders preserve edits until blur, then refresh the sidebar', { timeout: 30_000 }, async t => {
   const jira = createMockJira({ email: 'e2e@example.com', token: 'e2e-token' });
@@ -30,9 +28,9 @@ test('stale settings: background renders preserve edits until blur, then refresh
   });
   const env = { ...process.env, ISSUEMON_E2E: '1', ISSUEMON_USER_DATA: userData, ISSUEMON_HOME: dataDir, ISSUEMON_TOKEN: 'e2e-token' };
   delete env.ELECTRON_RUN_AS_NODE;
-  app = await electron.launch({ executablePath: PACKAGED || require('electron'), args: PACKAGED ? [] : [ROOT], env });
+  app = await electron.launch(launchOptions(env));
   const page = await app.firstWindow();
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1200, 780));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1200, 780));
   await page.waitForFunction(() => window.innerWidth > 1100 && window.issuemon);
   await page.evaluate(() => window.issuemon.checkNow());
   const staleCount = n => page.waitForFunction(count => document.querySelector('.va-nav [data-view="stale"] .count')?.textContent === String(count), n);

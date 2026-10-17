@@ -9,12 +9,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { _electron: electron } = require('playwright-core');
 const { createMockJira, seedDemo } = require('../test/support/mock-jira');
+const { launchOptions } = require('./launch');
 const { version: VERSION } = require('../package.json');
 
-const ROOT = path.join(__dirname, '..');
 const SHOTS = path.join(__dirname, 'screenshots');
-// Optionally test the built app: ISSUEMON_APP=dist/mac-arm64/IssueMon.app/Contents/MacOS/IssueMon npm run test:e2e
-const PACKAGED = process.env.ISSUEMON_APP ? path.resolve(ROOT, process.env.ISSUEMON_APP) : null;
 
 test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
   const jira = createMockJira({ email: 'e2e@example.com', token: 'e2e-token' });
@@ -39,10 +37,10 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
   });
   const env = { ...process.env, ISSUEMON_E2E: '1', ISSUEMON_USER_DATA: userData, ISSUEMON_HOME: dataDir, ISSUEMON_TOKEN: 'e2e-token', ISSUEMON_UPDATE_URL: `${url}/__releases/latest` };
   delete env.ELECTRON_RUN_AS_NODE; // set in terminals embedded in Electron-based tools; Electron then starts as plain Node
-  app = await electron.launch({ executablePath: PACKAGED || require('electron'), args: PACKAGED ? [] : [ROOT], env });
+  app = await electron.launch(launchOptions(env));
 
   const page = await app.firstWindow();
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1200, 780)); // CI displays are small: force the desktop layout
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1200, 780)); // CI displays are small: force the desktop layout. Content size: on Linux the window adds a title bar and menu bar
   await page.waitForFunction(() => window.innerWidth > 1100);
   // Diagnostics: show errors from renderer and main right away
   page.on('pageerror', err => console.error('[renderer-error]', err.message));
@@ -211,7 +209,7 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
       await page.waitForSelector('[data-row="WEB-1201"]', { state: 'detached' });
     });
     // Short window: WEB-1201 is the least recently updated, so it is at the bottom and out of view
-    await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setMinimumSize(380, 300); w.setSize(1200, 430); });
+    await app.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]; w.setMinimumSize(380, 300); w.setContentSize(1200, 430); });
     await page.waitForFunction(() => window.innerWidth === 1200 && window.innerHeight === 430);
     await page.click('[data-row="WEB-1423"]');
     await page.waitForSelector('.va-row.sel[data-row="WEB-1423"]');
@@ -384,6 +382,11 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await page.waitForSelector('.help');
     assert.match(await page.textContent('.help'), /Shortcuts/);
     assert.match(await page.textContent('.help'), /Open in Jira/);
+    // The modifier keys as the platform writes them: ⌘ and ⌥ on macOS, Ctrl and Alt elsewhere
+    const [mod, alt] = process.platform === 'darwin' ? ['⌘', '⌥'] : ['Ctrl+', 'Alt+'];
+    const keys = await page.locator('.help kbd').allTextContents();
+    for (const key of [`${mod}K`, `${mod}R`, `${mod}Z`, `${alt}↑`]) assert.ok(keys.includes(key), `${key} in ${keys.join(' ')}`);
+    assert.equal(await page.getAttribute('.va-sync [data-action="check"]', 'title'), `Check now (${mod}R)`);
     await page.keyboard.press('Escape');
     await page.waitForSelector('.help', { state: 'detached' });
     await page.click('[data-action="help"]');
@@ -1020,13 +1023,14 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     assert.equal(await status(), ''); // not checked yet: automatic checks do not run in the tests
     assert.equal(await page.locator('text=brew upgrade').count(), 0);
 
-    // A newer release: toast with two actions, the status line and the Homebrew hint
+    // A newer release: toast with two actions, the status line and, on macOS, the Homebrew hint
     jira.release = '9.9.9';
     await page.click('[data-action="check-updates"]');
     await page.waitForSelector('.snack:has-text("IssueMon 9.9.9 is available")');
     assert.deepEqual(await page.locator('.snack button').allTextContents(), ['View release', 'Later']);
     await until(async () => (await status()) === 'IssueMon 9.9.9 is available · View release', 'status line with the new version');
-    assert.match(await page.textContent('.set'), /Homebrew: brew upgrade --cask issuemon/);
+    if (process.platform === 'darwin') assert.match(await page.textContent('.set'), /Homebrew: brew upgrade --cask issuemon/);
+    else assert.doesNotMatch(await page.textContent('.set'), /Homebrew/); // the cask is macOS only
     await page.locator('fieldset:has(#set-checkUpdates)').screenshot({ path: path.join(SHOTS, '17-about-update.png') });
 
     // View release (toast): the release page opens in the browser, and only that kind of page can
@@ -1142,7 +1146,7 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
   });
 
   await t.test('narrow window: tab bar and detail over the list', async () => {
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(400, 760));
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(400, 760));
     await page.waitForFunction(() => window.innerWidth <= 420);
     await page.click('[data-view="changed"]');
     await page.waitForSelector('.va-row[data-row="WEB-1423"]');
@@ -1164,7 +1168,7 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     assert.ok(gap.snackLeft >= 0 && gap.snackRight <= gap.w, 'toast stays inside the window');
     await shot('6-mobile-toast');
     await assertAddCleared();
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1200, 780));
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1200, 780));
   });
 
   await t.test('state is kept after quitting', async () => {
@@ -1181,7 +1185,7 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     assert.equal(saved.secrets, undefined); // the token came from the environment, not stored
 
     // Start again: Dutch straight away, then back to English
-    const again = await electron.launch({ executablePath: PACKAGED || require('electron'), args: PACKAGED ? [] : [ROOT], env });
+    const again = await electron.launch(launchOptions(env));
     try {
       const win = await again.firstWindow();
       await win.waitForFunction(() => document.querySelector('.va-nav [data-view="changed"] .lbl')?.textContent === 'Gewijzigd');
