@@ -6,9 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-10-17
+
 ### Fixed
 
-- An edited comment now shows up in *Changed*, with a notification: "Sam edited a comment", with the new text, marked word by word when IssueMon saw the old text. Each edit counts once.
+- An edited comment now shows up in *Changed*, with a notification: "Sam edited a comment", with the new text, marked word by word when IssueMon saw the old text. Each edit counts once, and a save that leaves the text unchanged doesn't count.
+- A tracked issue that was deleted, or that you can no longer see, now shows up once in *Changed*, with a notification: "No longer accessible (deleted, or you no longer have access)". Only a real answer from Jira counts: no connection, a server error or a temporary error on that issue never does, and neither does the first check after connecting or changing the account. If the issue comes back, its red row clears without a notification.
 
 ## [0.1.2] - 2026-10-16
 
@@ -60,7 +63,8 @@ The first public release.
 
 - The data and token migrations from pre-release versions.
 
-[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/fundament-agency/issuemon/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/fundament-agency/issuemon/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/fundament-agency/issuemon/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/fundament-agency/issuemon/releases/tag/v0.1.0
