@@ -162,6 +162,17 @@ function changesFromSnapshots(prev, next) {
     .map(([field, from, to]) => ({ id: `s${at}-${field}`, at, author: null, field, label: field, from, to }));
 }
 
+const str = value => (typeof value === 'string' ? value : '');
+const list = value => (Array.isArray(value) ? value : []);
+
+/** The text of an ADF date node: YYYY-MM-DD for a millisecond timestamp, else the raw value as written (the schema only asks
+    for a string, and REST accepts "2026-10-17"). Never throws. */
+function adfDate(timestamp) {
+  const raw = typeof timestamp === 'number' ? String(timestamp) : str(timestamp);
+  const ms = /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : NaN;
+  return Number.isNaN(new Date(ms).getTime()) ? raw : new Date(ms).toISOString().slice(0, 10);
+}
+
 /** Readable text plus ranges of actual ADF mention nodes. No Jira markup or arbitrary attributes are stored. */
 function adfContent(node) {
   const plain = text => ({ text, mentions: [] });
@@ -181,7 +192,8 @@ function adfContent(node) {
   const trim = part => slice(part, part.text.length - part.text.trimStart().length, part.text.trimEnd().length);
   if (node == null) return plain('');
   if (typeof node === 'string') return plain(node);
-  const kids = () => join((node.content || []).map(adfContent));
+  if (typeof node !== 'object') return plain('');
+  const kids = () => join(list(node.content).map(adfContent));
   const block = () => join([kids(), plain('\n\n')]);
   switch (node.type) {
     case 'doc': {
@@ -195,7 +207,7 @@ function adfContent(node) {
       pieces.push(slice(part, start, part.text.length));
       return trim(join(pieces));
     }
-    case 'text': return plain(node.text || '');
+    case 'text': return plain(str(node.text));
     case 'hardBreak': return plain('\n');
     case 'paragraph':
     case 'heading':
@@ -203,25 +215,25 @@ function adfContent(node) {
     case 'panel':
     case 'codeBlock': return block();
     case 'bulletList':
-    case 'orderedList': return join([join((node.content || []).map((li, i) => join([
+    case 'orderedList': return join([join(list(node.content).map((li, i) => join([
       plain(node.type === 'orderedList' ? `${i + 1}. ` : '• '), trim(adfContent(li)),
     ])), '\n'), plain('\n\n')]);
     case 'listItem': return kids();
     case 'mention': {
-      const text = node.attrs?.text || '@someone'; // Jira content, not UI chrome
+      const text = str(node.attrs?.text) || '@someone'; // Jira content, not UI chrome
       const accountId = node.attrs?.id;
       return { text, mentions: typeof accountId === 'string' && accountId ? [{ start: 0, end: text.length, accountId }] : [] };
     }
-    case 'emoji': return plain(node.attrs?.text || node.attrs?.shortName || '');
+    case 'emoji': return plain(str(node.attrs?.text) || str(node.attrs?.shortName));
     case 'inlineCard':
-    case 'blockCard': return plain(node.attrs?.url || '');
-    case 'status': return plain(`[${node.attrs?.text || ''}]`);
-    case 'date': return plain(node.attrs?.timestamp ? new Date(+node.attrs.timestamp).toISOString().slice(0, 10) : '');
+    case 'blockCard': return plain(str(node.attrs?.url));
+    case 'status': return plain(`[${str(node.attrs?.text)}]`);
+    case 'date': return plain(adfDate(node.attrs?.timestamp));
     case 'mediaSingle':
     case 'mediaGroup': return plain('[attachment]\n\n');
     case 'media': return plain('');
     case 'rule': return plain('———\n\n');
-    case 'table': return join([join((node.content || []).map(row => join((row.content || []).map(cell => trim(adfContent(cell))), ' | ')), '\n'), plain('\n\n')]);
+    case 'table': return join([join(list(node.content).map(row => join(list(row?.content).map(cell => trim(adfContent(cell))), ' | ')), '\n'), plain('\n\n')]);
     default: return kids();
   }
 }
