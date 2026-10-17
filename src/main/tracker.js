@@ -97,12 +97,43 @@ function updateMentionFlag(change, accountId) {
   else delete change.mentionsMe;
 }
 
+/**
+ * Runs `fn` on every item, `limit` at a time. Resolves only when every worker is done, with what `fn` threw: a throw ends that item,
+ * never the worker, so nothing keeps running after this resolves.
+ */
 async function mapLimit(items, limit, fn) {
   let i = 0;
+  const crashes = [];
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (i < items.length) await fn(items[i++]);
+    while (i < items.length) {
+      try {
+        await fn(items[i++]);
+      } catch (err) {
+        crashes.push(err);
+      }
+    }
   });
   await Promise.all(workers);
+  return crashes;
+}
+
+/** A failure that may pass: login (a new token may be on its way), a rate limit, or a failure on Jira's side or on the way. */
+const passes = err => err.code === 'auth' || err.code === 'rate_limited' || isTransient(err);
+/** waitingError: the issue exists, so the 404 may have been a moment (see there). */
+const EXISTS = Symbol('exists');
+/** After this, no new request is started during the check: Jira refuses us, whatever the issue. */
+const refusesAll = err => err.code === 'auth' || err.code === 'rate_limited';
+
+/**
+ * Which of several errors of one check the check reports: a login problem, then a rate limit (with the longest Retry-After, so the next
+ * check waits for all of them), then something transient (backoff), then the rest.
+ */
+function mostUrgent(errors) {
+  const rank = e => (e.code === 'auth' ? 0 : e.code === 'rate_limited' ? 1 : isTransient(e) ? 2 : 3);
+  const best = Math.min(...errors.map(rank));
+  const same = errors.filter(e => rank(e) === best);
+  if (best === 1) return same.reduce((a, b) => ((b.retryAfter || 0) > (a.retryAfter || 0) ? b : a));
+  return same[0] ?? null;
 }
 
 /** Comma-separated text or an array → list without empty values. */
@@ -246,6 +277,7 @@ class Tracker extends EventEmitter {
       let fresh = [];
       let delay = this.settings.interval * MIN;
       let result;
+      let staleFailed = false;
       const gen = this.credentialsGen; // old credentials must not consume or announce new account state
       try {
         if (!this.data.me) {
@@ -253,12 +285,23 @@ class Tracker extends EventEmitter {
           if (gen !== this.credentialsGen) return { ok: true, found: 0 };
           this.setMe(me);
         }
-        fresh = await this.checkTracked(client, { quiet: this.data.reconnected, gen });
+        let error;
+        ({ fresh, error } = await this.checkTracked(client, { quiet: this.data.reconnected, gen }));
         if (gen !== this.credentialsGen) return { ok: true, found: 0 };
-        this.data.reconnected = false; // only the first check that got an answer after (re)connecting is quiet
-        await this.refreshStale(client);
-        if (gen !== this.credentialsGen) return { ok: true, found: 0 };
-        this.data.lastCheck = this.now();
+        if (!error) this.data.reconnected = false; // only the first check that got an answer after (re)connecting is quiet
+        // An issue that waits does not hold up the rest of the check; only Jira refusing everything (login, rate limit) does.
+        const refused = !!error && refusesAll(error);
+        if (!refused) {
+          try {
+            await this.refreshStale(client);
+          } catch (err) {
+            error ||= err;
+            staleFailed = true;
+          }
+          if (gen !== this.credentialsGen) return { ok: true, found: 0 };
+        }
+        if (!refused && !staleFailed) this.data.lastCheck = this.now();
+        if (error) throw error; // what was recorded before it is announced all the same (below)
         this.status = { state: 'ok', message: null };
         this.failures = 0;
         result = { ok: true, found: fresh.reduce((n, f) => n + f.changes.length, 0) };
@@ -268,7 +311,7 @@ class Tracker extends EventEmitter {
         if (isTransient(err)) delay = Math.min(delay, BACKOFF[Math.min(this.failures++, BACKOFF.length - 1)]);
         else this.failures = 0;
         if (err.retryAfter) delay = Math.max(delay, err.retryAfter * 1000);
-        result = { ok: false, found: 0, error: err.message };
+        result = { ok: false, found: fresh.reduce((n, f) => n + f.changes.length, 0), error: err.message };
       } finally {
         this.running = null;
         if (gen === this.credentialsGen) {
@@ -289,20 +332,33 @@ class Tracker extends EventEmitter {
     return this.running;
   }
 
-  /** `quiet`: issues missing from the answer are remembered (and shown in red) but not announced, such as on a new site. */
+  /**
+   * `quiet`: issues missing from the answer are remembered (and shown in red) but not announced, such as on a new site.
+   * Returns `{ fresh, error }`: the changes to announce and the error that failed part of the check, if any. A transient failure of
+   * one issue's changelog or comments (a server error, no connection, an answer that cannot be read, an issue that just disappeared)
+   * only makes that issue wait: its seenUntil stays, so the next check tries again, while the other issues and the missing ones are
+   * recorded as usual. After a rate limit or a login error no new request starts (issues not reached wait too); requests already
+   * running finish first. When this returns, no worker is running. Any other refusal falls back to a snapshot, see changesFromSnapshots.
+   */
   async checkTracked(client, { quiet = false, gen = this.credentialsGen } = {}) {
     const entries = this.data.tracked.filter(t => !t.loading);
-    if (!entries.length) return [];
+    if (!entries.length) return { fresh: [], error: null };
     const { issues, errors } = await client.bulkFetch(entries.map(t => t.id || t.key));
-    if (gen !== this.credentialsGen) return [];
+    if (gen !== this.credentialsGen) return { fresh: [], error: null };
     const byId = new Map(issues.map(i => [i.id, i]));
     const byKey = new Map(issues.map(i => [i.key, i]));
     const failed = new Set(errors.map(e => String(e?.id))); // issueErrors: Jira could not return these right now (a retriable error)
     const fresh = [];
     const now = this.now();
     const gone = []; // first-time missing issues: recorded only after identity verification
+    const failures = []; // errors that made an issue wait, or part of the check fail
+    let stopped = false; // Jira refuses everything (login, rate limit): no new request
+    const fail = err => {
+      failures.push(err);
+      if (refusesAll(err)) stopped = true;
+    };
 
-    await mapLimit(entries, PARALLEL, async t => {
+    const crashes = await mapLimit(entries, PARALLEL, async t => {
       if (gen !== this.credentialsGen) return;
       const next = (t.id && byId.get(t.id)) || byKey.get(t.key);
       if (!next) {
@@ -319,31 +375,56 @@ class Tracker extends EventEmitter {
         for (const c of t.changes) if (c.field === 'gone' && !c.processed) Object.assign(c, { processed: true, processedAt: now });
       }
       t.error = null;
-      t.lastChecked = now;
       t.id = next.id;
       t.key = next.key; // the issue may have moved to another project
       const prev = t.issue;
       const since = t.seenUntil ?? prev?.updated ?? null;
       if (!prev || since == null) { // first time: only a baseline
+        t.lastChecked = now;
         t.issue = next;
         t.seenUntil = next.updated;
         return;
       }
       if (!next.updated || next.updated <= since) {
+        t.lastChecked = now;
         t.issue = next;
         return;
       }
 
+      if (stopped) return; // not reached before Jira refused us: it keeps its seenUntil and waits for the next check
+      // Both requests run to the end, so none is left behind when one fails.
+      const asks = [() => client.changelog(t.key), () => client.comments(t.key)];
+      let answers = await Promise.allSettled(asks.map(ask => ask()));
+      let rejected = answers.filter(a => a.status === 'rejected').map(a => a.reason);
       let found;
-      try {
-        const [histories, comments] = await Promise.all([client.changelog(t.key), client.comments(t.key)]);
-        found = [...changesFromChangelog(histories, since), ...changesFromComments(comments, since, this.commentTexts(t))];
-      } catch (err) {
-        if (err.code === 'auth' || err.code === 'network' || err.code === 'rate_limited') throw err;
+      if (rejected.length) {
+        // A snapshot knows far less (no author, no comments or attachments), so only a lasting refusal falls back to it. What may pass
+        // makes this issue wait: its seenUntil and lastChecked stay and the next check asks again.
+        let waiting = await this.waitingError(client, t, mostUrgent(rejected));
+        if (waiting === EXISTS) {
+          // A 404 while the issue exists: it may have been gone for a moment when the request arrived (deleted and restored). Only a
+          // 404 that repeats is a lasting refusal, so the failed requests go out once more.
+          answers = await Promise.allSettled(answers.map((a, i) => (a.status === 'rejected' ? asks[i]() : a)));
+          rejected = answers.filter(a => a.status === 'rejected').map(a => a.reason);
+          waiting = rejected.length ? await this.waitingError(client, t, mostUrgent(rejected), { retried: true }) : null;
+        }
+        if (waiting) {
+          fail(waiting);
+          return;
+        }
+      }
+      if (rejected.length) {
         found = changesFromSnapshots(prev, next);
+      } else {
+        try {
+          found = [...changesFromChangelog(answers[0].value, since), ...changesFromComments(answers[1].value, since, this.commentTexts(t))];
+        } catch {
+          found = changesFromSnapshots(prev, next); // an answer that parses but makes no sense: never wait for it forever
+        }
       }
 
       if (gen !== this.credentialsGen) return;
+      t.lastChecked = now;
       const known = new Set(t.changes.map(c => c.id));
       const meId = this.data.me?.accountId;
       const added = [];
@@ -361,21 +442,25 @@ class Tracker extends EventEmitter {
       this.prune(t);
       const news = added.filter(c => !c.processed);
       if (news.length) fresh.push({ key: t.key, summary: next.summary, changes: news });
-    }).catch(err => {
-      // Keep the red row across a failed check/restart, without recording a missing change yet.
-      if (gen === this.credentialsGen) for (const t of gone) t.error = this.t('error.trackedMissing');
-      throw err;
     });
+    failures.push(...crashes); // a bug, but never a reason to leave the rest of the check undone
 
-    if (gone.length && gen === this.credentialsGen) { // after a change of credentials during this check, what the old site misses says nothing
+    if (gone.length && gen === this.credentialsGen && failures.some(e => e.code === 'auth')) {
+      for (const t of gone) t.error = this.t('error.trackedMissing'); // red; nothing is concluded from what a refused login leaves out
+    } else if (gone.length && gen === this.credentialsGen) { // after a change of credentials during this check, what the old site misses says nothing
       // Bad credentials can look like an answer too (Jira Cloud treats them as anonymous: 200, every issue left out): only report
       // when /myself still names the account we know. A failing /myself fails the check, so a dead token shows as an auth error.
-      const me = await client.myself();
-      if (gen !== this.credentialsGen) return [];
-      const same = !this.data.me?.accountId || me.accountId === this.data.me.accountId;
-      this.setMe(me);
+      let me;
+      try {
+        me = await client.myself();
+      } catch (error) {
+        failures.push(error); // the rows stay red, not yet recorded; the changes found above are still announced
+      }
+      if (gen !== this.credentialsGen) return { fresh: [], error: null };
+      const same = !me || !this.data.me?.accountId || me.accountId === this.data.me.accountId;
+      if (me) this.setMe(me);
       for (const t of gone) t.error = this.t('error.trackedMissing');
-      if (same) {
+      if (me && same) {
         for (const t of gone) {
           t.missingSince = now;
           if (quiet) continue;
@@ -386,7 +471,27 @@ class Tracker extends EventEmitter {
         }
       }
     }
-    return gen === this.credentialsGen ? fresh : [];
+    return gen === this.credentialsGen ? { fresh, error: failures.length ? mostUrgent(failures) : null } : { fresh: [], error: null };
+  }
+
+  /**
+   * The error that makes an issue wait for the next check, or null when its changelog or comments request failed for good and the
+   * snapshot takes over. Only what may pass makes it wait: a login error, a rate limit, a server error, no connection, an answer
+   * that cannot be read, and a 404 for an issue that has just disappeared (the next check reports it as missing). Every other
+   * 4xx (400, 403, 410, a 404 for an issue that still exists) is a refusal that retrying will not change.
+   * A first 404 for an issue that does exist answers EXISTS: it may have been deleted and restored in between, so the caller asks
+   * once more, and only a 404 that repeats (`retried`) is a refusal.
+   */
+  async waitingError(client, t, err, { retried = false } = {}) {
+    if (err.code === 'not_found') {
+      try {
+        const { issues } = await client.bulkFetch([t.id || t.key]); // 404 is also what a deleted issue answers
+        return issues.length ? (retried ? null : EXISTS) : err;
+      } catch (verifyError) {
+        return verifyError;
+      }
+    }
+    return passes(err) ? err : null;
   }
 
   /** Comment id → the latest text and mention ranges IssueMon recorded for it (as a new comment or an edit): the old text of the next edit. */

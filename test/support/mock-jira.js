@@ -75,6 +75,7 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
   const issues = new Map();
   const removed = new Map(); // key → issue taken away by remove(), for restore()
   const requests = [];
+  const failures = []; // see fail()
   const projectKeys = new Set(projects); // where you may create issues; addIssue adds the project of the key
   let seq = 10_000;
   let server = null;
@@ -265,6 +266,18 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
       return json(res, 401, { errorMessages: ['Client must be authenticated to access this resource.'] });
     }
 
+    const failure = failures.find(f => f.left > 0 && f.path.test(url.pathname) && (!f.key || url.pathname.includes(`/issue/${f.key}/`)));
+    if (failure) {
+      failure.left--;
+      const { status, body: failBody } = failure;
+      if (typeof failBody === 'string') {
+        res.writeHead(status, { 'Content-Type': failBody.startsWith('<') ? 'text/html' : 'application/json', ...failure.headers });
+        return res.end(failBody);
+      }
+      res.writeHead(status, { 'Content-Type': 'application/json', ...failure.headers });
+      return res.end(JSON.stringify(failBody));
+    }
+
     if (req.method === 'GET' && url.pathname === '/rest/api/3/myself') {
       if (mock.myselfStatus) return json(res, mock.myselfStatus, { errorMessages: ['Mock: /myself fails.'] });
       return json(res, 200, people.me);
@@ -350,6 +363,17 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     searchStatus: null, // HTTP status for POST search/jql instead of the answer, e.g. 400 (a request Jira rejects)
     bulkfetchBody: undefined, // a body to answer every bulkfetch with (status 200), e.g. {} like a proxy would
     issueErrorIds: [], // ids or keys that bulkfetch leaves out of issues and names in issueErrors, as for a retriable error
+    /**
+     * Makes the next `count` requests to an endpoint (myself, bulkfetch, changelog, comment, search) fail, then it works again.
+     * `status` and `body` are what comes back instead: an object is sent as JSON, a string as is (HTML when it starts with `<`;
+     * status 200 with `'{}'` or `'not json'` is a 200 that is no real answer). `key`: only for that issue's changelog or comments.
+     * `headers`: e.g. Retry-After.
+     */
+    fail(endpoint, { count = 1, status = 503, body = { errorMessages: ['Mock: service unavailable.'] }, key = null, headers = {} } = {}) {
+      const path = { myself: /\/myself$/, bulkfetch: /\/bulkfetch$/, changelog: /\/changelog$/, comment: /\/comment$/, search: /\/search\/jql$/ }[endpoint];
+      if (!path) throw new Error(`Mock: unknown endpoint ${endpoint}`);
+      failures.push({ path, left: count, status, body, key, headers });
+    },
     release: APP_VERSION, // the latest release the update check sees; the running version means "up to date"
     addIssue,
     change,
