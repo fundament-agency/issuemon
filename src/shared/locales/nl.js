@@ -98,6 +98,7 @@
   'error.titleRequired': 'Geef het issue een titel.',
   'error.notesProjectRequired': 'Stel eerst in Instellingen een project in voor nieuwe issues.',
   'error.newIssueUnavailable': 'Het nieuwe issue is (nog) niet op te halen.',
+  'error.siteChanged': 'De Jira-site is gewijzigd terwijl dit bezig was.',
   'error.notificationsUnsupported': 'Meldingen worden op dit systeem niet ondersteund.',
   'error.startup': 'IssueMon kan niet starten',
 

@@ -6,7 +6,7 @@ const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const { parseKeys } = require('../shared/keys');
 const { pending, isChanged, changedList } = require('../shared/inbox');
-const { changesFromChangelog, changesFromComments, commentIdOf, changesFromSnapshots, staleJql, excludedProject } = require('./changes');
+const { changesFromChangelog, changesFromComments, commentIdOf, changesFromSnapshots, staleJql, staleExcluded, unknownStatuses, excludedProject } = require('./changes');
 const { describe, assignedToMe, changeKind, compareChanges, rankChanges } = require('../shared/change');
 const { INTERVALS, THEMES, noteText, projectKey, notesProjectOf, isConfigured } = require('../shared/rules');
 const { normalizeBaseUrl } = require('./jira');
@@ -17,12 +17,14 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const HISTORY_LIMIT = 60; // processed changes we keep per issue
 const PARALLEL = 4;
+const MARKED_MAX = 10_000; // change ids that Undo of Processed can still reach
 const CACHE_MAX = 200; // items per cache (activity, issue types)
 /** Retry delays after consecutive transient errors; never longer than the configured interval. */
 const BACKOFF = [30_000, MIN, 2 * MIN, 5 * MIN];
 /** No connection (including a request timeout, which jira.js reports as 'network'), a server error, or an error with neither status nor code (not from the Jira client, e.g. an unreadable response): such an error will probably go away soon. */
 const isTransient = err => err.code === 'network' || err.status >= 500 || (err.status == null && !err.code);
 
+const NO_STALE = { issues: [], fetchedAt: null, error: null };
 const DEFAULT_SETTINGS = {
   baseUrl: '',
   email: '',
@@ -45,11 +47,11 @@ const DEFAULT_SETTINGS = {
 };
 const STALE_SORTS = ['newest', 'oldest'];
 
-/** Fills in missing fields (new install or older storage) and migrates older storage to version 4. */
+/** Fills in missing fields (new install or older storage) and migrates older storage to version 5. */
 function ensureShape(data) {
   const d = data && typeof data === 'object' ? data : {};
   const from = Number.isInteger(d.version) ? d.version : 0;
-  d.version = 4;
+  d.version = 5;
   const stored = { ...(d.settings || {}) };
   // Version 1 → 2 (detected by the old fields, not by the version number): the Backlog flag became a regular status and the project fields for name and key became one.
   if ('excludeBacklog' in stored) {
@@ -75,20 +77,38 @@ function ensureShape(data) {
   d.settings.staleFilter = idList(d.settings.staleFilter); // the renderer relies on an array
   if (!LANGUAGE_SETTINGS.includes(d.settings.language)) d.settings.language = 'system';
   d.me = d.me || null;
-  d.tracked = Array.isArray(d.tracked) ? d.tracked.filter(t => t && t.key && !t.loading) : [];
-  for (const t of d.tracked) {
-    t.changes = Array.isArray(t.changes) ? t.changes : [];
-    for (const c of t.changes) updateMentionFlag(c, d.me?.accountId);
-    // Version 3 → 4: up to 0.1.2 an issue that was missing had an error and nothing else (checkTracked is the only place that sets one): it is not announced after the update.
-    if (from < 4 && t.error && !t.missingSince) t.missingSince = d.lastCheck || Date.now();
-  }
+  // Version 4 → 5: a tracked list per site (host). `tracked` is the list of the site in `site`, the rest are kept in `sites`.
+  // The list in `tracked` belongs to the host that is configured now: the stored `site` is not trusted, so a file that was edited
+  // or written by another version cannot make a later save swap the list without a change of credentials.
+  d.site = hostOf(d.settings.baseUrl);
+  d.tracked = shapeTracked(d.tracked, d.me, from, d.lastCheck);
+  const seen = new Set();
+  d.sites = (Array.isArray(d.sites) ? d.sites : [])
+    .filter(s => s && typeof s.host === 'string' && !seen.has(s.host) && seen.add(s.host))
+    .map(s => ({ host: s.host, tracked: shapeTracked(s.tracked, null, from, d.lastCheck) })) // not the connected account's: no mention flags
+    .filter(s => s.tracked.length);
   d.reconnected = d.reconnected === true;
-  d.stale = { issues: [], fetchedAt: null, error: null, ...(d.stale || {}) };
+  d.stale = { ...NO_STALE, ...(d.stale || {}) };
+  // The site the list was fetched from. Storage from before has none: that list is from the configured host. A list of another site is not kept.
+  if (typeof d.stale.site !== 'string') d.stale.site = d.site;
+  if (d.stale.site !== d.site) d.stale = { ...NO_STALE, site: d.site };
   d.notes = Array.isArray(d.notes) ? d.notes.filter(n => n && n.id && n.text) : [];
   for (const n of d.notes) delete n.creating;
   d.lastCheck = d.lastCheck || null;
   d.updates = { lastCheck: null, latest: null, url: null, dismissed: null, ...(d.updates && typeof d.updates === 'object' ? d.updates : {}) };
   return d;
+}
+
+/** A stored tracked list: only real entries, each with a changes array, mention flags for the known account, and the 0.1.2 migration. */
+function shapeTracked(list, me, from, lastCheck) {
+  const tracked = Array.isArray(list) ? list.filter(t => t && t.key && !t.loading) : [];
+  for (const t of tracked) {
+    t.changes = Array.isArray(t.changes) ? t.changes : [];
+    for (const c of t.changes) updateMentionFlag(c, me?.accountId);
+    // Version 3 → 4: up to 0.1.2 an issue that was missing had an error and nothing else (checkTracked is the only place that sets one): it is not announced after the update.
+    if (from < 4 && t.error && !t.missingSince) t.missingSince = lastCheck || Date.now();
+  }
+  return tracked;
 }
 
 /** Mention flags follow the connected account; legacy records without mention ids cannot address it. */
@@ -97,12 +117,43 @@ function updateMentionFlag(change, accountId) {
   else delete change.mentionsMe;
 }
 
+/**
+ * Runs `fn` on every item, `limit` at a time. Resolves only when every worker is done, with what `fn` threw: a throw ends that item,
+ * never the worker, so nothing keeps running after this resolves.
+ */
 async function mapLimit(items, limit, fn) {
   let i = 0;
+  const crashes = [];
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (i < items.length) await fn(items[i++]);
+    while (i < items.length) {
+      try {
+        await fn(items[i++]);
+      } catch (err) {
+        crashes.push(err);
+      }
+    }
   });
   await Promise.all(workers);
+  return crashes;
+}
+
+/** A failure that may pass: login (a new token may be on its way), a rate limit, or a failure on Jira's side or on the way. */
+const passes = err => err.code === 'auth' || err.code === 'rate_limited' || isTransient(err);
+/** waitingError: the issue exists, so the 404 may have been a moment (see there). */
+const EXISTS = Symbol('exists');
+/** After this, no new request is started during the check: Jira refuses us, whatever the issue. */
+const refusesAll = err => err.code === 'auth' || err.code === 'rate_limited';
+
+/**
+ * Which of several errors of one check the check reports: a login problem, then a rate limit (with the longest Retry-After, so the next
+ * check waits for all of them), then something transient (backoff), then the rest.
+ */
+function mostUrgent(errors) {
+  const rank = e => (e.code === 'auth' ? 0 : e.code === 'rate_limited' ? 1 : isTransient(e) ? 2 : 3);
+  const best = Math.min(...errors.map(rank));
+  const same = errors.filter(e => rank(e) === best);
+  if (best === 1) return same.reduce((a, b) => ((b.retryAfter || 0) > (a.retryAfter || 0) ? b : a));
+  return same[0] ?? null;
 }
 
 /** Comma-separated text or an array → list without empty values. */
@@ -153,11 +204,13 @@ class Tracker extends EventEmitter {
     this.failures = 0; // consecutive transient errors, for the backoff
     this.status = { state: 'idle', message: null };
     this.removed = new Map();
+    this.marked = new Set(); // change ids of the last Processed actions, for Undo; they belong to the list of the current site
     this.removedNotes = new Map();
     this.typeCache = new Map(); // project -> { at, types }, not persisted
     this.activityCache = new Map(); // key -> { at, result } (failed attempts too), not persisted
     this.staleGen = 0; // counter of refreshStale requests, to discard outdated responses
     this.credentialsGen = 0; // counter of credential changes: a check that began before one asked the old site
+    this.listGen = 0; // counter of switches to another site's tracked list: a request that began before one belongs to the old site
     this.people = NO_PEOPLE; // people list for the Stale setting, not persisted
     this.env = env; // fixed info for the renderer, e.g. { platform, packaged, locale }
     this.version = version;
@@ -246,6 +299,7 @@ class Tracker extends EventEmitter {
       let fresh = [];
       let delay = this.settings.interval * MIN;
       let result;
+      let staleFailed = false;
       const gen = this.credentialsGen; // old credentials must not consume or announce new account state
       try {
         if (!this.data.me) {
@@ -253,12 +307,23 @@ class Tracker extends EventEmitter {
           if (gen !== this.credentialsGen) return { ok: true, found: 0 };
           this.setMe(me);
         }
-        fresh = await this.checkTracked(client, { quiet: this.data.reconnected, gen });
+        let error;
+        ({ fresh, error } = await this.checkTracked(client, { quiet: this.data.reconnected, gen }));
         if (gen !== this.credentialsGen) return { ok: true, found: 0 };
-        this.data.reconnected = false; // only the first check that got an answer after (re)connecting is quiet
-        await this.refreshStale(client);
-        if (gen !== this.credentialsGen) return { ok: true, found: 0 };
-        this.data.lastCheck = this.now();
+        if (!error) this.data.reconnected = false; // only the first check that got an answer after (re)connecting is quiet
+        // An issue that waits does not hold up the rest of the check; only Jira refusing everything (login, rate limit) does.
+        const refused = !!error && refusesAll(error);
+        if (!refused) {
+          try {
+            await this.refreshStale(client);
+          } catch (err) {
+            error ||= err;
+            staleFailed = true;
+          }
+          if (gen !== this.credentialsGen) return { ok: true, found: 0 };
+        }
+        if (!refused && !staleFailed) this.data.lastCheck = this.now();
+        if (error) throw error; // what was recorded before it is announced all the same (below)
         this.status = { state: 'ok', message: null };
         this.failures = 0;
         result = { ok: true, found: fresh.reduce((n, f) => n + f.changes.length, 0) };
@@ -268,7 +333,7 @@ class Tracker extends EventEmitter {
         if (isTransient(err)) delay = Math.min(delay, BACKOFF[Math.min(this.failures++, BACKOFF.length - 1)]);
         else this.failures = 0;
         if (err.retryAfter) delay = Math.max(delay, err.retryAfter * 1000);
-        result = { ok: false, found: 0, error: err.message };
+        result = { ok: false, found: fresh.reduce((n, f) => n + f.changes.length, 0), error: err.message };
       } finally {
         this.running = null;
         if (gen === this.credentialsGen) {
@@ -289,20 +354,33 @@ class Tracker extends EventEmitter {
     return this.running;
   }
 
-  /** `quiet`: issues missing from the answer are remembered (and shown in red) but not announced, such as on a new site. */
+  /**
+   * `quiet`: issues missing from the answer are remembered (and shown in red) but not announced, such as on a new site.
+   * Returns `{ fresh, error }`: the changes to announce and the error that failed part of the check, if any. A transient failure of
+   * one issue's changelog or comments (a server error, no connection, an answer that cannot be read, an issue that just disappeared)
+   * only makes that issue wait: its seenUntil stays, so the next check tries again, while the other issues and the missing ones are
+   * recorded as usual. After a rate limit or a login error no new request starts (issues not reached wait too); requests already
+   * running finish first. When this returns, no worker is running. Any other refusal falls back to a snapshot, see changesFromSnapshots.
+   */
   async checkTracked(client, { quiet = false, gen = this.credentialsGen } = {}) {
     const entries = this.data.tracked.filter(t => !t.loading);
-    if (!entries.length) return [];
+    if (!entries.length) return { fresh: [], error: null };
     const { issues, errors } = await client.bulkFetch(entries.map(t => t.id || t.key));
-    if (gen !== this.credentialsGen) return [];
+    if (gen !== this.credentialsGen) return { fresh: [], error: null };
     const byId = new Map(issues.map(i => [i.id, i]));
     const byKey = new Map(issues.map(i => [i.key, i]));
     const failed = new Set(errors.map(e => String(e?.id))); // issueErrors: Jira could not return these right now (a retriable error)
     const fresh = [];
     const now = this.now();
     const gone = []; // first-time missing issues: recorded only after identity verification
+    const failures = []; // errors that made an issue wait, or part of the check fail
+    let stopped = false; // Jira refuses everything (login, rate limit): no new request
+    const fail = err => {
+      failures.push(err);
+      if (refusesAll(err)) stopped = true;
+    };
 
-    await mapLimit(entries, PARALLEL, async t => {
+    const crashes = await mapLimit(entries, PARALLEL, async t => {
       if (gen !== this.credentialsGen) return;
       const next = (t.id && byId.get(t.id)) || byKey.get(t.key);
       if (!next) {
@@ -319,31 +397,56 @@ class Tracker extends EventEmitter {
         for (const c of t.changes) if (c.field === 'gone' && !c.processed) Object.assign(c, { processed: true, processedAt: now });
       }
       t.error = null;
-      t.lastChecked = now;
       t.id = next.id;
       t.key = next.key; // the issue may have moved to another project
       const prev = t.issue;
       const since = t.seenUntil ?? prev?.updated ?? null;
       if (!prev || since == null) { // first time: only a baseline
+        t.lastChecked = now;
         t.issue = next;
         t.seenUntil = next.updated;
         return;
       }
       if (!next.updated || next.updated <= since) {
+        t.lastChecked = now;
         t.issue = next;
         return;
       }
 
+      if (stopped) return; // not reached before Jira refused us: it keeps its seenUntil and waits for the next check
+      // Both requests run to the end, so none is left behind when one fails.
+      const asks = [() => client.changelog(t.key), () => client.comments(t.key)];
+      let answers = await Promise.allSettled(asks.map(ask => ask()));
+      let rejected = answers.filter(a => a.status === 'rejected').map(a => a.reason);
       let found;
-      try {
-        const [histories, comments] = await Promise.all([client.changelog(t.key), client.comments(t.key)]);
-        found = [...changesFromChangelog(histories, since), ...changesFromComments(comments, since, this.commentTexts(t))];
-      } catch (err) {
-        if (err.code === 'auth' || err.code === 'network' || err.code === 'rate_limited') throw err;
+      if (rejected.length) {
+        // A snapshot knows far less (no author, no comments or attachments), so only a lasting refusal falls back to it. What may pass
+        // makes this issue wait: its seenUntil and lastChecked stay and the next check asks again.
+        let waiting = await this.waitingError(client, t, mostUrgent(rejected));
+        if (waiting === EXISTS) {
+          // A 404 while the issue exists: it may have been gone for a moment when the request arrived (deleted and restored). Only a
+          // 404 that repeats is a lasting refusal, so the failed requests go out once more.
+          answers = await Promise.allSettled(answers.map((a, i) => (a.status === 'rejected' ? asks[i]() : a)));
+          rejected = answers.filter(a => a.status === 'rejected').map(a => a.reason);
+          waiting = rejected.length ? await this.waitingError(client, t, mostUrgent(rejected), { retried: true }) : null;
+        }
+        if (waiting) {
+          fail(waiting);
+          return;
+        }
+      }
+      if (rejected.length) {
         found = changesFromSnapshots(prev, next);
+      } else {
+        try {
+          found = [...changesFromChangelog(answers[0].value, since), ...changesFromComments(answers[1].value, since, this.commentTexts(t))];
+        } catch {
+          found = changesFromSnapshots(prev, next); // an answer that parses but makes no sense: never wait for it forever
+        }
       }
 
       if (gen !== this.credentialsGen) return;
+      t.lastChecked = now;
       const known = new Set(t.changes.map(c => c.id));
       const meId = this.data.me?.accountId;
       const added = [];
@@ -361,21 +464,25 @@ class Tracker extends EventEmitter {
       this.prune(t);
       const news = added.filter(c => !c.processed);
       if (news.length) fresh.push({ key: t.key, summary: next.summary, changes: news });
-    }).catch(err => {
-      // Keep the red row across a failed check/restart, without recording a missing change yet.
-      if (gen === this.credentialsGen) for (const t of gone) t.error = this.t('error.trackedMissing');
-      throw err;
     });
+    failures.push(...crashes); // a bug, but never a reason to leave the rest of the check undone
 
-    if (gone.length && gen === this.credentialsGen) { // after a change of credentials during this check, what the old site misses says nothing
+    if (gone.length && gen === this.credentialsGen && failures.some(e => e.code === 'auth')) {
+      for (const t of gone) t.error = this.t('error.trackedMissing'); // red; nothing is concluded from what a refused login leaves out
+    } else if (gone.length && gen === this.credentialsGen) { // after a change of credentials during this check, what the old site misses says nothing
       // Bad credentials can look like an answer too (Jira Cloud treats them as anonymous: 200, every issue left out): only report
       // when /myself still names the account we know. A failing /myself fails the check, so a dead token shows as an auth error.
-      const me = await client.myself();
-      if (gen !== this.credentialsGen) return [];
-      const same = !this.data.me?.accountId || me.accountId === this.data.me.accountId;
-      this.setMe(me);
+      let me;
+      try {
+        me = await client.myself();
+      } catch (error) {
+        failures.push(error); // the rows stay red, not yet recorded; the changes found above are still announced
+      }
+      if (gen !== this.credentialsGen) return { fresh: [], error: null };
+      const same = !me || !this.data.me?.accountId || me.accountId === this.data.me.accountId;
+      if (me) this.setMe(me);
       for (const t of gone) t.error = this.t('error.trackedMissing');
-      if (same) {
+      if (me && same) {
         for (const t of gone) {
           t.missingSince = now;
           if (quiet) continue;
@@ -386,7 +493,27 @@ class Tracker extends EventEmitter {
         }
       }
     }
-    return gen === this.credentialsGen ? fresh : [];
+    return gen === this.credentialsGen ? { fresh, error: failures.length ? mostUrgent(failures) : null } : { fresh: [], error: null };
+  }
+
+  /**
+   * The error that makes an issue wait for the next check, or null when its changelog or comments request failed for good and the
+   * snapshot takes over. Only what may pass makes it wait: a login error, a rate limit, a server error, no connection, an answer
+   * that cannot be read, and a 404 for an issue that has just disappeared (the next check reports it as missing). Every other
+   * 4xx (400, 403, 410, a 404 for an issue that still exists) is a refusal that retrying will not change.
+   * A first 404 for an issue that does exist answers EXISTS: it may have been deleted and restored in between, so the caller asks
+   * once more, and only a 404 that repeats (`retried`) is a refusal.
+   */
+  async waitingError(client, t, err, { retried = false } = {}) {
+    if (err.code === 'not_found') {
+      try {
+        const { issues } = await client.bulkFetch([t.id || t.key]); // 404 is also what a deleted issue answers
+        return issues.length ? (retried ? null : EXISTS) : err;
+      } catch (verifyError) {
+        return verifyError;
+      }
+    }
+    return passes(err) ? err : null;
   }
 
   /** Comment id → the latest text and mention ranges IssueMon recorded for it (as a new comment or an edit): the old text of the next edit. */
@@ -410,18 +537,22 @@ class Tracker extends EventEmitter {
           const warning = skip.length ? this.t('stale.unknownStatus', { n: skip.length, statuses: skip.join(', ') }) : null;
           if (gen !== this.staleGen) return;
           const skipProject = excludedProject(this.settings);
-          this.data.stale = { issues: issues.filter(i => !skipProject(i)), truncated, fetchedAt: this.now(), error: null, warning };
+          this.data.stale = { issues: issues.filter(i => !skipProject(i)), truncated, fetchedAt: this.now(), error: null, warning, site: this.data.site };
           return;
         } catch (err) {
           // "The value 'Backlog' does not exist for the field 'status'." → drop that status and try again.
-          const unknown = err.status === 400 ? [...err.message.matchAll(/value '([^']+)' does not exist for the field 'status'/gi)].map(m => m[1]) : [];
+          const unknown = err.status === 400 ? unknownStatuses(err.details, staleExcluded(this.settings).filter(s => !skip.some(k => k.toLowerCase() === s.toLowerCase()))) : [];
           if (!unknown.length || unknown.every(u => skip.includes(u))) throw err;
           skip.push(...unknown.filter(u => !skip.includes(u)));
         }
       }
     } catch (err) {
       if (err.code === 'auth' || err.code === 'network') throw err;
-      if (gen === this.staleGen) this.data.stale = { ...this.data.stale, error: err.message };
+      if (gen === this.staleGen) {
+        const kept = this.data.stale.site === this.data.site ? this.data.stale : NO_STALE; // never keep what came from another site
+        // The old list stays on screen, but a warning belongs to the answer it came with, not next to a new error.
+        this.data.stale = { ...kept, error: err.message, warning: null, site: this.data.site };
+      }
     }
   }
 
@@ -477,6 +608,7 @@ class Tracker extends EventEmitter {
     if (!wanted.length) return { ok: true, added: [], duplicates, notFound: [] };
 
     const now = this.now();
+    const listGen = this.listGen; // a switch to another site's list drops the placeholders: the answer is for the site we left
     const placeholders = wanted.map(key => ({ key, addedAt: now, loading: true, changes: [] }));
     this.data.tracked.unshift(...placeholders);
     this.changed();
@@ -486,10 +618,12 @@ class Tracker extends EventEmitter {
     try {
       ({ issues } = await client.bulkFetch(wanted));
     } catch (err) {
+      if (listGen !== this.listGen) return { ok: false, error: this.t('error.siteChanged') };
       placeholders.forEach(drop);
       this.changed();
       return { ok: false, error: err.message };
     }
+    if (listGen !== this.listGen) return { ok: false, error: this.t('error.siteChanged') };
 
     const byKey = new Map(issues.map(i => [i.key, i]));
     const added = [];
@@ -519,6 +653,7 @@ class Tracker extends EventEmitter {
     if (this.find(key)) return { ok: true, added: [], duplicates: [key], notFound: [] };
     const issue = this.data.stale.issues.find(i => i.key === key);
     if (!issue) return this.addIssues(key);
+    if (this.data.stale.site !== this.data.site) return { ok: false, error: this.t('error.siteChanged') }; // a list of the previous site holds other issues
     this.data.tracked.unshift({ key, id: issue.id, issue, seenUntil: issue.updated, addedAt: this.now(), lastChecked: this.now(), changes: [] });
     this.store.save();
     this.changed();
@@ -558,14 +693,16 @@ class Tracker extends EventEmitter {
         c.processed = true;
         c.processedAt = now;
         ids.push(c.id);
+        this.marked.add(c.id);
       }
     }
+    while (this.marked.size > MARKED_MAX) this.marked.delete(this.marked.values().next().value);
     if (ids.length) { this.store.save(); this.changed(); }
     return ids;
   }
 
   unmark(ids) {
-    const set = new Set(ids);
+    const set = new Set([].concat(ids).filter(id => this.marked.delete(id)));
     for (const t of this.data.tracked) for (const c of t.changes) if (set.has(c.id)) { c.processed = false; c.processedAt = null; }
     this.store.save();
     this.changed();
@@ -665,8 +802,10 @@ class Tracker extends EventEmitter {
     if (!client) return { ok: false, error: this.t('error.connectFirst') };
     const cached = this.typeCache.get(key);
     if (cached && this.now() - cached.at < HOUR) return { ok: true, types: cached.types };
+    const listGen = this.listGen;
     try {
       const types = await client.issueTypes(key);
+      if (listGen !== this.listGen) return { ok: false, error: this.t('error.siteChanged') };
       this.remember(this.typeCache, key, { at: this.now(), types });
       return { ok: true, types };
     } catch (err) {
@@ -686,8 +825,10 @@ class Tracker extends EventEmitter {
     if (!client) return { ok: false, error: this.t('error.connectFirst') };
     const cached = this.activityCache.get(key);
     if (cached && this.now() - cached.at < (cached.result.ok ? 10 * MIN : 30e3)) return cached.result;
+    const listGen = this.listGen;
     try {
       const [comments, histories] = await Promise.all([client.comments(key), client.changelog(key)]);
+      if (listGen !== this.listGen) return { ok: false, error: this.t('error.siteChanged'), fetchedAt: this.now() };
       const newest = list => list.reduce((a, b) => (!a || b.at >= a.at ? b : a), null);
       const comment = newest(changesFromComments(comments, null));
       const change = newest(changesFromChangelog(histories, null));
@@ -701,6 +842,7 @@ class Tracker extends EventEmitter {
       return result;
     } catch (err) {
       const result = { ok: false, error: err.message, fetchedAt: this.now() };
+      if (listGen !== this.listGen) return { ...result, error: this.t('error.siteChanged') };
       this.remember(this.activityCache, key, { at: this.now(), result });
       return result;
     }
@@ -721,6 +863,7 @@ class Tracker extends EventEmitter {
     const client = this.getClient();
     if (!client) return { ok: false, error: this.t('error.connectFirst') };
 
+    const listGen = this.listGen;
     note.creating = true;
     this.changed();
     let created;
@@ -735,6 +878,7 @@ class Tracker extends EventEmitter {
     // The issue exists now: remove the note, so one note never produces two issues.
     this.data.notes = this.data.notes.filter(n => n !== note);
     this.store.save();
+    if (listGen !== this.listGen) return { ok: true, key: created.key, tracked: false, error: this.t('error.siteChanged') }; // the issue is on the site we left: not for the new list
     const r = await this.addIssues(created.key);
     if (r.ok && (r.added.includes(created.key) || r.duplicates.includes(created.key))) return { ok: true, key: created.key, tracked: true };
     return { ok: true, key: created.key, tracked: false, error: r.error || this.t('error.newIssueUnavailable') };
@@ -772,6 +916,7 @@ class Tracker extends EventEmitter {
     if ('staleSort' in patch && STALE_SORTS.includes(patch.staleSort)) next.staleSort = patch.staleSort;
     if ('language' in patch && LANGUAGE_SETTINGS.includes(patch.language)) next.language = patch.language;
     this.data.settings = next;
+    if (hostOf(next.baseUrl) !== this.data.site) this.switchSite(hostOf(next.baseUrl));
 
     // The token is only ever sent to the site it was entered for: another host (or no valid address any more) clears it,
     // unless the same patch brings a new token.
@@ -810,6 +955,29 @@ class Tracker extends EventEmitter {
     const changed = Object.keys(next).filter(k => JSON.stringify(next[k]) !== JSON.stringify(before[k]));
     if (changed.length) this.emit('settings', { before, next, changed });
     return urlRefused ? { ...next, urlRefused: true } : next;
+  }
+
+  /**
+   * Swaps in the tracked list of another site (host): `tracked` is always the list of `site`, the lists of the sites we left are in `sites`.
+   * Jira ids only mean something within one site, so a list is never asked about another site. A site that was never used starts empty;
+   * the list of an unconfigured state (no URL yet) goes to the first site entered, as storage from before this did.
+   */
+  switchSite(host) {
+    const old = this.data.site;
+    this.setMe(null); // the account is not known on the next site: mention flags are cleared now, so no list is kept with another account's flags
+    const live = this.data.tracked.filter(t => !t.loading); // a request still adding an issue notices through listGen
+    const saved = this.data.sites.find(s => s.host === host);
+    const sites = this.data.sites.filter(s => s !== saved && s.host !== old);
+    let next = saved ? saved.tracked : [];
+    if (old === '' && !saved) next = live;
+    else if (live.length) sites.push({ host: old, tracked: live });
+    this.data.sites = sites;
+    this.data.tracked = next;
+    this.data.site = host;
+    this.removed.clear(); // Undo of Stop tracking and of Processed belongs to the list it came from
+    this.marked.clear();
+    this.data.stale = { ...NO_STALE, site: host }; // fetched from the site we left; the next check fetches the new site's
+    this.listGen++;
   }
 
   /** After a change of URL, email or token: log in again and check soon. */

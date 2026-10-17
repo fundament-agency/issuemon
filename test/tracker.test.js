@@ -86,6 +86,31 @@ test('check finds changes after the baseline and notifies them', async t => {
   assert.equal(entry.changes.length, 2);
 });
 
+test('a date in a description or comment that is no timestamp does not stop the checks', async t => {
+  const { jira, tracker } = await setup(t);
+  const { alex, sam } = jira.people;
+  const withDate = timestamp => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [
+    { type: 'text', text: 'Due ' }, { type: 'date', attrs: { timestamp } },
+  ] }] });
+  jira.addIssue({ key: 'WEB-1', summary: 'Odd description', description: withDate('2026-10-17'), updated: Date.now() - DAY });
+  jira.addIssue({ key: 'WEB-2', summary: 'Odd comment', updated: Date.now() - DAY });
+  jira.addIssue({ key: 'WEB-3', summary: 'Normal', updated: Date.now() - DAY });
+
+  // Tracking the issue with the odd description works, and its description reads as written
+  const added = await tracker.addIssues('WEB-1 WEB-2 WEB-3');
+  assert.equal(added.ok, true);
+  assert.equal(tracker.find('WEB-1').issue.description, 'Due 2026-10-17');
+
+  // Odd dates in a comment and a new comment on a normal issue: all recorded in one check
+  jira.comment('WEB-2', withDate('abc'), sam);
+  jira.change('WEB-3', { field: 'status', from: 'To Do', to: 'Review', author: alex });
+  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
+  assert.deepEqual(tracker.find('WEB-2').changes.map(c => [c.field, c.to]), [['comment', 'Due abc']]);
+  assert.deepEqual(tracker.find('WEB-3').changes.map(c => [c.field, c.to]), [['status', 'Review']]);
+  assert.equal(tracker.find('WEB-2').error ?? null, null);
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 }); // and nothing is reported twice
+});
+
 test('own changes are stored silently as processed', async t => {
   const { jira, tracker, notes } = await setup(t, { ignoreOwn: true });
   jira.addIssue({ key: 'WEB-1', summary: 'x', updated: Date.now() - DAY });
@@ -402,7 +427,7 @@ test('a vanished issue: the first check after changing the account is quiet, and
   assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
 });
 
-test('a vanished issue: a failure on another issue in the same check loses nothing', async t => {
+test('a vanished issue: a failure on another issue in the same check does not hold it back, and loses nothing', async t => {
   const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2');
   jira.remove('WEB-1');
   jira.change('WEB-2', { field: 'status', from: 'To Do', to: 'Done', author: jira.people.alex });
@@ -410,14 +435,15 @@ test('a vanished issue: a failure on another issue in the same check loses nothi
   tracker.getClient = () => ({ ...real(), changelog: async () => { throw Object.assign(new Error('No connection to Jira.'), { code: 'network' }); } });
   assert.equal((await tracker.check()).ok, false);
   const gone = tracker.find('WEB-1');
-  assert.deepEqual(gone.changes, []);
-  assert.equal(gone.missingSince, undefined);
-  assert.equal(notes.length, 0);
+  assert.deepEqual(gone.changes.map(c => c.field), ['gone']); // reported all the same
+  assert.ok(gone.missingSince);
+  assert.deepEqual(tracker.find('WEB-2').changes, []); // this one waits
+  assert.deepEqual(notes.map(n => n.key), ['WEB-1']);
 
   tracker.getClient = real;
-  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
-  assert.deepEqual(gone.changes.map(c => c.field), ['gone']);
-  assert.deepEqual(notes.map(n => n.key).sort(), ['WEB-1', 'WEB-2']);
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.deepEqual(gone.changes.map(c => c.field), ['gone']); // not again
+  assert.deepEqual(notes.map(n => n.key), ['WEB-1', 'WEB-2']);
 });
 
 test('a vanished issue: a change of account during a check keeps the next check quiet', async t => {
@@ -472,6 +498,7 @@ test('a vanished issue: a failed check and a restart before the next one lose no
   const { jira, tracker, store, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2');
   jira.remove('WEB-1');
   jira.change('WEB-2', { field: 'status', from: 'To Do', to: 'Done', author: jira.people.alex });
+  jira.fail('myself'); // the identity check before reporting WEB-1 fails
   const real = tracker.getClient;
   tracker.getClient = () => ({ ...real(), changelog: async () => { throw Object.assign(new Error('No connection to Jira.'), { code: 'network' }); } });
   assert.equal((await tracker.check()).ok, false);
@@ -709,14 +736,14 @@ test('ensureShape: the old Backlog flag and two project fields are migrated, ide
   assert.deepEqual(old({ excludedProjectKeys: ['DEV'] }).settings.excludedProjects, ['DEV']);
   // an existing excludedProjects wins, the old fields disappear
   assert.deepEqual(old({ excludedProjects: ['X'], excludedProjectNames: ['ARCHIVE-*'] }).settings.excludedProjects, ['X']);
-  assert.equal(merged.version, 4);
+  assert.equal(merged.version, 5);
   // fresh install
   const fresh = ensureShape({});
   assert.deepEqual(fresh.settings.excluded, []);
   assert.deepEqual(fresh.settings.excludedProjects, []);
   assert.equal(fresh.settings.notesProject, '');
   assert.equal('excludeBacklog' in fresh.settings, false);
-  assert.equal(fresh.version, 4);
+  assert.equal(fresh.version, 5);
   assert.equal(fresh.settings.staleSort, 'oldest');
   // twice gives the same result
   const once = old({ excluded: ['Closed', 'On hold'], excludeBacklog: true, excludedProjectNames: ['ARCHIVE-*'], excludedProjectKeys: ['DEV'] });
@@ -746,7 +773,7 @@ test('ensureShape: version 2 → 3 sets staleSort to oldest first, once', () => 
   // a v2 store saved the default 'newest', chosen or not
   const v2 = ensureShape({ version: 2, settings: { staleSort: 'newest' } });
   assert.equal(v2.settings.staleSort, 'oldest');
-  assert.equal(v2.version, 4);
+  assert.equal(v2.version, 5);
   // from v3 on the user's choice counts
   assert.equal(ensureShape({ version: 3, settings: { staleSort: 'newest' } }).settings.staleSort, 'newest');
   assert.equal(ensureShape(JSON.parse(JSON.stringify(v2))).settings.staleSort, 'oldest');
@@ -781,6 +808,75 @@ test('stale: a status that does not exist in this Jira is skipped with a warning
   assert.equal(tracker.data.stale.error, null);
   assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['S-1']);
   assert.equal(tracker.data.stale.warning, 'Status does not exist in your Jira and was ignored: Live');
+});
+
+test('stale: an unknown status with an apostrophe or a backslash is skipped with a warning too', async t => {
+  const { jira, tracker } = await setup(t, { excluded: ['Closed'] });
+  jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  tracker.saveSettings({ excluded: "Backlog, Won't Fix" });
+  await tracker.check();
+  assert.equal(tracker.data.stale.error, null);
+  assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['S-1']);
+  assert.equal(tracker.data.stale.warning, "Status does not exist in your Jira and was ignored: Won't Fix");
+
+  tracker.saveSettings({ excluded: 'On hold\\, Say "hi", Backlog' });
+  await tracker.check();
+  assert.equal(tracker.data.stale.error, null);
+  assert.equal(tracker.data.stale.warning, 'Statuses do not exist in your Jira and were ignored: On hold\\, Say "hi"');
+  assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['S-1']);
+});
+
+test('stale: an unknown status is found in a 400 in another language, by the names that were sent', async t => {
+  const { jira, tracker } = await setup(t, { excluded: ['Fix', "Won't Fix", 'Backlog'] });
+  jira.unknownStatusText = s => `De waarde '${s}' bestaat niet voor het veld 'status'.`;
+  jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  jira.addIssue({ key: 'S-2', summary: 'in Fix', status: 'Fix', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  await tracker.check();
+  assert.equal(tracker.data.stale.error, null);
+  assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['S-1']);
+  assert.match(tracker.data.stale.warning, /Won't Fix/);
+  const sent = jira.requests.findLast(r => r.path === '/rest/api/3/search/jql').body.jql;
+  assert.match(sent, /status NOT IN \("Fix", "Backlog"\)/); // Fix is a status too, and "Fix" in "Won't Fix" does not make it unknown
+});
+
+test('stale: in another language only a quoted name in Jira\'s own message is unknown, an unquoted one is not', async t => {
+  const { jira, tracker } = await setup(t, { excluded: ['Closed', 'Live', 'Fix'] });
+  jira.unknownStatusText = s => `Der Wert ${s} existiert nicht für das Feld status.`;
+  jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  tracker.saveSettings({ excluded: 'Closed, Parked' });
+  await tracker.check();
+  assert.match(tracker.data.stale.error, /Parked/); // no quotes: nothing to go on, so the error stays
+  assert.equal(tracker.data.stale.warning, null);
+  assert.match(jira.requests.findLast(r => r.path === '/rest/api/3/search/jql').body.jql, /"Closed", "Parked"/);
+});
+
+test('stale: the words around Jira\'s message never make an excluded status unknown, in any language', async t => {
+  for (const language of ['en', 'nl', 'fr', 'de', 'es']) {
+    const catalog = require(`../src/shared/locales/${language}`);
+    // every word of IssueMon's own "Jira rejected the request (400, POST …): …" in this language, as a status name
+    const words = [...new Set(catalog['error.jira.rejectedDetail'].replace(/\{\w+\}/g, ' ').split(/[^\p{L}]+/u).filter(w => w.length > 2))];
+    const { jira, tracker } = await setup(t, { excluded: ['Backlog'], language });
+    jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+    jira.searchStatus = 400;
+    tracker.saveSettings({ excluded: words.join(', ') });
+    await tracker.check();
+    const searches = jira.requests.filter(r => r.path === '/rest/api/3/search/jql');
+    const jql = searches.findLast(() => true).body.jql;
+    for (const w of words) assert.ok(jql.includes(`"${w}"`), `${language}: "${w}" is still excluded`);
+    assert.equal(tracker.data.stale.warning, null, language);
+    assert.match(tracker.data.stale.error, /Mock: search fails/, language);
+  }
+});
+
+test('stale: a failing request clears the warning of an earlier answer', async t => {
+  const { jira, tracker } = await setup(t, { excluded: ['Closed', 'Live'] });
+  jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  await tracker.check();
+  assert.match(tracker.data.stale.warning, /Live/);
+  jira.searchStatus = 400;
+  await tracker.check();
+  assert.match(tracker.data.stale.error, /400/);
+  assert.equal(tracker.data.stale.warning, null);
 });
 
 test('stale: several people at once, only you by default', async t => {
@@ -1710,4 +1806,626 @@ test('a reconnect timer consumed by an older check is scheduled again after it f
   assert.equal(timers.length, 2);
   assert.equal(timers.at(-1).ms, 1000);
   assert.equal(tracker.nextCheck, now + 1000);
+});
+
+/* ---------- a request for one issue's changes fails during a check ---------- */
+
+/** Two changes on `key` that a snapshot cannot show: a comment and an attachment, each with its author. */
+function commentAndAttachment(jira, key = 'WEB-1') {
+  jira.comment(key, 'Please review before Friday', jira.people.sam);
+  jira.change(key, { field: 'Attachment', from: null, to: 'spec.pdf', author: jira.people.sam });
+}
+
+for (const [name, endpoint, fault] of [
+  ['a 503 on the comments', 'comment', { status: 503 }],
+  ['a 502 HTML page on the changelog', 'changelog', { status: 502, body: '<html><body>502 Bad Gateway</body></html>' }],
+  ['a 200 {} on the comments', 'comment', { status: 200, body: '{}' }],
+  ['a 200 {} on the changelog', 'changelog', { status: 200, body: '{}' }],
+  ['a 200 with a body that is no JSON', 'comment', { status: 200, body: 'Sign in to the Wi-Fi' }],
+]) {
+  test(`${name} records nothing and keeps seenUntil; the next check records it all, notified once`, async t => {
+    const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+    const entry = tracker.find('WEB-1');
+    const seenUntil = entry.seenUntil;
+    commentAndAttachment(jira);
+    jira.fail(endpoint, fault);
+
+    const failed = await tracker.check();
+    assert.equal(failed.ok, false);
+    assert.deepEqual(entry.changes, []);
+    assert.equal(entry.seenUntil, seenUntil);
+    assert.equal(tracker.status.state, 'error');
+    assert.equal(notes.length, 0);
+
+    assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
+    assert.deepEqual(entry.changes.map(c => [c.field, c.author?.name]).sort(), [['attachment', 'Sam Rivera'], ['comment', 'Sam Rivera']]);
+    assert.equal(notes.length, 1);
+    assert.equal(notes[0].key, 'WEB-1');
+    assert.deepEqual(await tracker.check(), { ok: true, found: 0 });
+    assert.equal(notes.length, 1);
+  });
+}
+
+test('a lasting refusal of the changelog (403) falls back to what the issue itself shows', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  jira.fail('changelog', { count: 99, status: 403, body: { errorMessages: ['You do not have permission to view the changelog.'] } });
+  jira.change('WEB-1', { field: 'status', from: 'To Do', to: 'Review', author: jira.people.alex });
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.deepEqual(tracker.find('WEB-1').changes.map(c => [c.field, c.to]), [['status', 'Review']]);
+  assert.equal(notes.length, 1);
+});
+
+test('a 404 on the changelog of an issue that still exists falls back to what the issue itself shows', async t => {
+  const { jira, tracker } = await trackedSetup(t, 'WEB-1');
+  jira.fail('changelog', { count: 99, status: 404, body: { errorMessages: ['Not found.'] } });
+  jira.change('WEB-1', { field: 'status', from: 'To Do', to: 'Review', author: jira.people.alex });
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.deepEqual(tracker.find('WEB-1').changes.map(c => [c.field, c.to]), [['status', 'Review']]);
+});
+
+test('a 404 for an issue that is back by the time it is checked is asked once more, not recorded from the snapshot', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  commentAndAttachment(jira);
+  const real = tracker.getClient;
+  let vanished = false;
+  let back = false;
+  tracker.getClient = () => ({
+    ...real(),
+    // The issue is gone for the changelog request, and back for the check that asks whether it still exists.
+    changelog: async key => { if (!vanished) { vanished = true; jira.remove(key); } return real().changelog(key); },
+    bulkFetch: async keys => { if (vanished && !back) { back = true; jira.restore('WEB-1'); } return real().bulkFetch(keys); },
+  });
+  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
+  assert.deepEqual(tracker.find('WEB-1').changes.map(c => [c.field, c.author?.name]).sort(), [['attachment', 'Sam Rivera'], ['comment', 'Sam Rivera']]);
+  assert.equal(notes.length, 1);
+});
+
+test('a 404 because the issue disappeared after the bulk fetch records nothing; the issue is retried', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  const entry = tracker.find('WEB-1');
+  const seenUntil = entry.seenUntil;
+  commentAndAttachment(jira);
+  const real = tracker.getClient;
+  tracker.getClient = () => ({ ...real(), changelog: async key => { jira.remove(key); return real().changelog(key); } });
+  assert.equal((await tracker.check()).ok, false);
+  assert.deepEqual(entry.changes, []);
+  assert.equal(entry.seenUntil, seenUntil);
+
+  tracker.getClient = real;
+  jira.restore('WEB-1');
+  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
+  assert.equal(entry.changes.length, 2);
+  assert.equal(notes.length, 1);
+});
+
+/* ---------- changes found by a check that then fails are still announced ---------- */
+
+test('a 429 on one issue: the other issue is recorded and notified, the failing one waits, and nothing runs on after the check', async t => {
+  const { jira, tracker, notes, timers } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.comment('WEB-1', 'First', jira.people.sam);
+  jira.comment('WEB-2', 'Can you look at this today?', jira.people.alex);
+  jira.fail('comment', { key: 'WEB-1', status: 429, body: { errorMessages: ['Rate limit exceeded.'] }, headers: { 'Retry-After': '3600' } });
+
+  const failed = await tracker.check();
+  assert.equal(failed.ok, false);
+  assert.equal(tracker.status.code, 'rate_limited');
+  assert.equal(timers.at(-1), 3_600_000); // the Retry-After is still honoured
+  assert.deepEqual(notes.map(n => n.key), ['WEB-2']);
+  const snapshot = JSON.stringify(tracker.data.tracked);
+  assert.equal(tracker.find('WEB-1').changes.length, 0);
+  assert.equal(tracker.find('WEB-2').changes.length, 1);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(JSON.stringify(tracker.data.tracked), snapshot); // nothing changes after check() resolved
+
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.deepEqual(notes.map(n => n.key), ['WEB-2', 'WEB-1']); // each change notified exactly once
+  assert.equal(tracker.find('WEB-2').changes.length, 1);
+});
+
+test('an authentication error on one issue still announces what the others recorded', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.comment('WEB-1', 'First', jira.people.sam);
+  jira.comment('WEB-2', 'Second', jira.people.alex);
+  jira.fail('comment', { key: 'WEB-1', status: 401, body: { errorMessages: ['Unauthorized'] } });
+  const failed = await tracker.check();
+  assert.equal(failed.ok, false);
+  assert.equal(tracker.status.code, 'auth');
+  assert.deepEqual(notes.map(n => n.key), ['WEB-2']);
+});
+
+test('a failing /myself before reporting a missing issue still announces the recorded changes', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.remove('WEB-1');
+  jira.comment('WEB-2', 'Can you look at this today?', jira.people.alex);
+  jira.fail('myself', { count: 1, status: 503 });
+  const failed = await tracker.check();
+  assert.equal(failed.ok, false);
+  assert.deepEqual(notes.map(n => n.key), ['WEB-2']);
+  assert.equal(tracker.find('WEB-1').missingSince, undefined);
+  assert.ok(tracker.find('WEB-1').error); // red, but not yet recorded as gone
+
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.deepEqual(notes.map(n => n.key), ['WEB-2', 'WEB-1']);
+  assert.equal(tracker.find('WEB-2').changes.length, 1);
+});
+
+/* ---------- which failures wait, and what a waiting issue does not hold up ---------- */
+
+/** The changelog request of `only` (or of every issue) removes the issue first, as if it was deleted after the bulk fetch: a 404. */
+function vanishOnChangelog(tracker, jira, only = null) {
+  const real = tracker.getClient;
+  tracker.getClient = () => ({ ...real(), changelog: async key => { if (!only || key === only) jira.remove(key); return real().changelog(key); } });
+  return () => { tracker.getClient = real; };
+}
+
+test('a 404 on one issue and a 503 on another: the transient error is reported, with its backoff', async t => {
+  const { jira, tracker, timers } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.comment('WEB-1', 'One', jira.people.sam);
+  jira.comment('WEB-2', 'Two', jira.people.sam);
+  jira.fail('comment', { key: 'WEB-2', status: 503 });
+  vanishOnChangelog(tracker, jira, 'WEB-1');
+  const r = await tracker.check();
+  assert.equal(r.ok, false);
+  assert.match(r.error, /server error/); // the 503, not the 404
+  assert.equal(timers.at(-1), 30_000);
+  assert.equal(tracker.failures, 1);
+});
+
+test('several rate limits: the next check waits for the longest Retry-After', async t => {
+  const { jira, tracker, timers } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.comment('WEB-1', 'One', jira.people.sam);
+  jira.comment('WEB-2', 'Two', jira.people.sam);
+  jira.fail('comment', { key: 'WEB-1', status: 429, headers: { 'Retry-After': '3600' } });
+  jira.fail('comment', { key: 'WEB-2', status: 429, headers: { 'Retry-After': '7200' } });
+  assert.equal((await tracker.check()).ok, false);
+  assert.equal(timers.at(-1), 7_200_000);
+});
+
+test('a malformed changelog skips the bad entries; it never leaves the issue waiting', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  jira.comment('WEB-1', 'Please review', jira.people.sam);
+  const values = [null, 5, 'x', { created: 7 }, { id: '1', created: '2999-01-01T00:00:00.000+0000', items: [null, 3, { field: 'status', toString: 'Review' }] }];
+  jira.fail('changelog', { status: 200, body: JSON.stringify({ values, total: 5 }) });
+  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
+  assert.deepEqual(tracker.find('WEB-1').changes.map(c => c.field).sort(), ['comment', 'status']);
+  assert.equal(notes.length, 1);
+});
+
+test('a parse that throws is no reason to wait for ever: the snapshot takes over', async t => {
+  const { jira, tracker } = await trackedSetup(t, 'WEB-1');
+  jira.change('WEB-1', { field: 'status', from: 'To Do', to: 'Review', author: jira.people.alex });
+  const real = tracker.getClient;
+  tracker.getClient = () => ({ ...real(), changelog: async () => [{ get created() { throw new TypeError('boom'); } }] });
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.deepEqual(tracker.find('WEB-1').changes.map(c => [c.field, c.to]), [['status', 'Review']]);
+  assert.equal(tracker.find('WEB-1').seenUntil, jira.issues.get('WEB-1').fields.updated);
+});
+
+test('issues that keep failing do not hold up the rest: Stale refreshes, the deleted issue is announced, a 400 falls back to the snapshot', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2', 'WEB-3', 'WEB-4');
+  jira.comment('WEB-1', 'Always 500', jira.people.sam);
+  jira.fail('comment', { key: 'WEB-1', count: 99, status: 500 });
+  jira.remove('WEB-2');
+  jira.change('WEB-3', { field: 'status', from: 'To Do', to: 'Review', author: jira.people.alex });
+  jira.fail('changelog', { key: 'WEB-3', count: 99, status: 400, body: { errorMessages: ['Bad request'] } });
+  jira.comment('WEB-4', 'Fine', jira.people.alex);
+  const searches = () => jira.requests.filter(q => q.path.endsWith('/search/jql')).length;
+  const before = searches();
+  tracker.data.lastCheck = 1;
+  const r = await tracker.check();
+  assert.equal(r.ok, false);
+  assert.match(r.error, /server error/);
+  assert.equal(r.found, 3);
+  assert.equal(searches(), before + 1); // the Stale refresh ran
+  assert.ok(tracker.data.stale.fetchedAt);
+  assert.ok(tracker.data.lastCheck > 1); // and the check counts as an answer
+  assert.deepEqual(tracker.find('WEB-1').changes, []); // waits
+  assert.deepEqual(tracker.find('WEB-2').changes.map(c => c.field), ['gone']);
+  assert.deepEqual(tracker.find('WEB-3').changes.map(c => [c.field, c.to]), [['status', 'Review']]);
+  assert.equal(tracker.find('WEB-4').changes.length, 1);
+  assert.deepEqual(notes.map(n => n.key).sort(), ['WEB-2', 'WEB-3', 'WEB-4']);
+});
+
+test('a waiting issue keeps its lastChecked from its last answer', async t => {
+  const { jira, tracker } = await trackedSetup(t, 'WEB-1');
+  const entry = tracker.find('WEB-1');
+  entry.lastChecked = 1234;
+  jira.comment('WEB-1', 'One', jira.people.sam);
+  jira.fail('comment', { status: 503 });
+  await tracker.check();
+  assert.equal(entry.lastChecked, 1234);
+  await tracker.check();
+  assert.ok(entry.lastChecked > 1234);
+});
+
+test('after a 429 no new changelog or comments request starts; the issues not reached wait for the next check', async t => {
+  const keys = Array.from({ length: 20 }, (_, n) => `WEB-${n + 1}`);
+  const { jira, tracker, notes } = await trackedSetup(t, ...keys);
+  for (const key of keys) jira.comment(key, `Comment on ${key}`, jira.people.sam);
+  jira.fail('comment', { status: 429, headers: { 'Retry-After': '3600' } });
+  const asked = () => new Set(jira.requests.filter(q => /\/(changelog|comment)$/.test(q.path)).map(q => q.path.split('/')[5]));
+  const before = asked().size;
+  const failed = await tracker.check();
+  assert.equal(failed.ok, false);
+  assert.equal(tracker.status.code, 'rate_limited');
+  assert.ok(asked().size - before <= 4, `${asked().size - before} issues asked`); // only the first issue of each of the four workers
+  const recorded = tracker.data.tracked.filter(x => x.changes.length).length;
+  assert.ok(recorded < 20);
+  assert.equal(tracker.data.tracked.filter(x => x.seenUntil < jira.issues.get(x.key).fields.updated).length, 20 - recorded);
+
+  assert.equal((await tracker.check()).ok, true);
+  assert.deepEqual(tracker.data.tracked.map(x => x.changes.length), keys.map(() => 1)); // each once
+  const named = notes.flatMap(n => (n.key ? [n.key] : n.body.split(', ')));
+  assert.equal(named.length, 20);
+  assert.equal(new Set(named).size, 20); // each notified once
+});
+
+test('a vanished 404 waits, and the next check reports the issue as missing', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  jira.comment('WEB-1', 'One', jira.people.sam);
+  vanishOnChangelog(tracker, jira);
+  const r = await tracker.check();
+  assert.equal(r.ok, false);
+  assert.deepEqual(tracker.find('WEB-1').changes, []);
+  assert.equal(notes.length, 0);
+  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  assert.deepEqual(tracker.find('WEB-1').changes.map(c => c.field), ['gone']);
+  assert.deepEqual(notes.map(n => n.key), ['WEB-1']);
+});
+
+test('a refused login: no missing issue is concluded from it', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2');
+  jira.remove('WEB-1');
+  jira.comment('WEB-2', 'Two', jira.people.sam);
+  jira.fail('comment', { status: 401, body: { errorMessages: ['Unauthorized'] } });
+  const failed = await tracker.check();
+  assert.equal(tracker.status.code, 'auth');
+  assert.equal(failed.ok, false);
+  assert.deepEqual(tracker.find('WEB-1').changes, []);
+  assert.equal(tracker.find('WEB-1').missingSince, undefined);
+  assert.ok(tracker.find('WEB-1').error);
+  assert.equal(notes.length, 0);
+});
+
+test('a bug while recording one issue ends that issue only: the others finish and nothing runs on after the check', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1', 'WEB-2', 'WEB-3');
+  for (const key of ['WEB-1', 'WEB-2', 'WEB-3']) jira.comment(key, `On ${key}`, jira.people.sam);
+  const prune = tracker.prune.bind(tracker);
+  tracker.prune = entry => { if (entry.key === 'WEB-1') throw new TypeError('boom'); prune(entry); };
+  const r = await tracker.check();
+  assert.equal(r.ok, false);
+  assert.equal(r.error, 'boom');
+  assert.deepEqual(notes.map(n => n.key).sort(), ['WEB-2', 'WEB-3']);
+  const snapshot = JSON.stringify(tracker.data.tracked);
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(JSON.stringify(tracker.data.tracked), snapshot);
+});
+
+/* ---------- one tracked list per Jira site (host) ---------- */
+
+/** Tracker on mock site A (`jira`), with a second mock site `other`; both number their issues from 10001, so ids collide. */
+async function setupTwoSites(t) {
+  const ctx = await setup(t);
+  const other = createMockJira({ email: 'user@example.com', token: 'tok' });
+  await other.start();
+  t.after(() => other.stop());
+  ctx.jira.addIssue({ key: 'WEB-1', summary: 'Site A: checkout broken', assignee: ctx.jira.people.me, updated: Date.now() - 30 * DAY });
+  other.addIssue({ key: 'HR-7', summary: 'Site B: salary review', updated: Date.now() - DAY });
+  const switchTo = site => ctx.tracker.saveSettings({ baseUrl: site.url, token: 'tok' }); // another host clears the token unless the patch brings one
+  return { ...ctx, other, switchTo };
+}
+
+test('switching to another Jira site: its issue with the same id is never taken for a tracked issue', async t => {
+  const { jira, other, tracker, notes, switchTo } = await setupTwoSites(t);
+  assert.equal(jira.issues.get('WEB-1').id, other.issues.get('HR-7').id);
+  await tracker.addIssues('WEB-1');
+  switchTo(other);
+  assert.deepEqual(tracker.data.tracked, []);
+  await tracker.check();
+  other.comment('HR-7', 'Confidential: approved', other.people.alex);
+  await tracker.check();
+  assert.deepEqual(tracker.data.tracked, []);
+  assert.deepEqual(notes, []);
+});
+
+test('each Jira site has its own list: switching back restores the old one with its changes and seen state', async t => {
+  const { jira, other, tracker, notes, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  jira.change('WEB-1', { field: 'priority', from: 'Medium', to: 'High', author: jira.people.alex });
+  await tracker.check();
+  assert.equal(notes.length, 1);
+  const before = JSON.parse(JSON.stringify(tracker.data.tracked));
+  assert.equal(before[0].changes.length, 1);
+
+  switchTo(other);
+  await tracker.addIssues('HR-7');
+  assert.deepEqual(tracker.data.tracked.map(x => [x.key, x.issue.summary]), [['HR-7', 'Site B: salary review']]);
+  other.comment('HR-7', 'Looks fine', other.people.alex);
+  await tracker.check();
+  assert.equal(tracker.find('HR-7').changes.length, 1);
+  assert.equal(notes.length, 2);
+
+  switchTo(jira);
+  assert.deepEqual(tracker.data.tracked, before);
+  await tracker.check();
+  assert.deepEqual(tracker.data.tracked.map(x => [x.key, x.issue.summary]), [['WEB-1', 'Site A: checkout broken']]);
+  assert.equal(tracker.find('WEB-1').changes.length, 1);
+  assert.equal(notes.length, 2); // nothing of site B was notified again, nor anything new for A
+
+  switchTo(other);
+  assert.deepEqual(tracker.data.tracked.map(x => x.key), ['HR-7']);
+  assert.equal(tracker.find('HR-7').changes.length, 1);
+});
+
+test('only the host counts: email, path, scheme, case and a trailing slash keep the list', async t => {
+  const { jira, tracker } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  const entry = tracker.find('WEB-1');
+  tracker.saveSettings({ email: 'someone.else@example.com' });
+  assert.equal(tracker.find('WEB-1'), entry);
+  const host = new URL(jira.url).host;
+  for (const url of [`http://${host}/`, `HTTP://${host.toUpperCase()}/jira/software`, ` ${host}/browse/WEB-1 `]) {
+    tracker.saveSettings({ baseUrl: url });
+    assert.equal(tracker.find('WEB-1'), entry, url);
+  }
+  assert.deepEqual(tracker.data.sites, []);
+});
+
+test('an emptied URL keeps the list of the old site for later', async t => {
+  const { jira, tracker } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  tracker.saveSettings({ baseUrl: '' });
+  assert.deepEqual(tracker.data.tracked, []);
+  tracker.saveSettings({ baseUrl: jira.url, token: 'tok' });
+  assert.deepEqual(tracker.data.tracked.map(x => x.key), ['WEB-1']);
+});
+
+test('storage from before there was a list per site belongs to the configured host', async t => {
+  const { jira, other, tracker, store, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  const old = JSON.parse(JSON.stringify(store.data));
+  delete old.site;
+  delete old.sites;
+  old.version = 4;
+  const migrated = ensureShape(old);
+  assert.equal(migrated.site, new URL(jira.url).host);
+  assert.deepEqual(migrated.sites, []);
+  assert.deepEqual(migrated.tracked.map(x => x.key), ['WEB-1']);
+  // And it behaves like a list that was always kept per site.
+  store.data = migrated;
+  switchTo(other);
+  assert.deepEqual(tracker.data.tracked, []);
+  switchTo(jira);
+  assert.deepEqual(tracker.data.tracked.map(x => x.key), ['WEB-1']);
+});
+
+test('the lists of other sites survive a restart, and malformed ones are dropped', async t => {
+  const { jira, other, tracker, store, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  switchTo(other);
+  const reloaded = ensureShape(JSON.parse(JSON.stringify(store.data)));
+  assert.deepEqual(reloaded.sites.map(s => [s.host, s.tracked.map(x => x.key)]), [[new URL(jira.url).host, ['WEB-1']]]);
+  const broken = ensureShape({ settings: { baseUrl: jira.url }, sites: [null, { host: 5 }, { host: 'x.example', tracked: 'no' }, { host: 'y.example', tracked: [{ key: 'A-1' }, null] }] });
+  assert.deepEqual(broken.sites.map(s => [s.host, s.tracked.map(x => x.key)]), [['y.example', ['A-1']]]);
+  assert.deepEqual(broken.sites[0].tracked[0].changes, []);
+});
+
+test('a check that is on its way when the site changes writes nothing into either list', async t => {
+  const { jira, other, tracker, notes, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  jira.comment('WEB-1', 'Site A news', jira.people.alex, Date.now());
+  const running = tracker.check(); // asks site A
+  switchTo(other);
+  await running;
+  assert.deepEqual(tracker.data.tracked, []);
+  assert.deepEqual(notes, []);
+  switchTo(jira);
+  assert.deepEqual(tracker.find('WEB-1').changes, []); // the answer of the interrupted check was dropped, not half applied
+  await tracker.check();
+  assert.equal(tracker.find('WEB-1').changes.length, 1);
+});
+
+test('adding an issue that is on its way when the site changes does not land in the new list', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  other.addIssue({ key: 'WEB-1', summary: 'Site B: same key and id' });
+  const adding = tracker.addIssues('WEB-1'); // asks site A
+  switchTo(other);
+  const r = await adding;
+  assert.equal(r.ok, false);
+  assert.deepEqual(tracker.data.tracked, []);
+  switchTo(jira);
+  assert.deepEqual(tracker.data.tracked, []); // no half-added placeholder was kept for A either
+});
+
+test('Undo of Stop tracking cannot bring an issue of another site back', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  assert.equal(tracker.untrack('WEB-1'), true);
+  switchTo(other);
+  assert.equal(tracker.restore('WEB-1'), false);
+  assert.deepEqual(tracker.data.tracked, []);
+  switchTo(jira);
+  assert.equal(tracker.restore('WEB-1'), false);
+});
+
+test('the Stale list of the previous site goes with the switch, and Track cannot use it', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  await tracker.check();
+  assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['WEB-1']);
+  const staleA = JSON.parse(JSON.stringify(tracker.data.stale));
+  switchTo(other);
+  assert.deepEqual(tracker.data.stale, { issues: [], fetchedAt: null, error: null, site: new URL(other.url).host });
+  const r = await tracker.track('WEB-1'); // not in the (empty) list: asked of the new site, which does not know it
+  assert.deepEqual(r.added, []);
+  assert.deepEqual(tracker.data.tracked, []);
+  // A list that does belong to another site is refused, however it got there.
+  tracker.data.stale = staleA;
+  const refused = await tracker.track('WEB-1');
+  assert.deepEqual(refused, { ok: false, error: 'The Jira site changed while this was running.' });
+  assert.deepEqual(tracker.data.tracked, []);
+  switchTo(jira);
+  assert.deepEqual(tracker.data.stale.issues, []);
+});
+
+test('a failed Stale refresh on the new site never keeps issues of the previous one', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  await tracker.check();
+  switchTo(other);
+  tracker.data.stale = { ...tracker.data.stale, issues: [{ key: 'WEB-1', id: '10001' }], site: new URL(jira.url).host }; // as a list fetched before the switch
+  tracker.getClient = () => ({ search: async () => { throw Object.assign(new Error('Bad query'), { status: 400 }); } });
+  await tracker.refreshStale(tracker.getClient());
+  assert.deepEqual(tracker.data.stale.issues, []);
+  assert.equal(tracker.data.stale.error, 'Bad query');
+  assert.equal(tracker.data.stale.site, new URL(other.url).host);
+});
+
+test('Undo of Processed cannot reach a change of another site, also after switching back', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  jira.comment('WEB-1', 'News', jira.people.alex, Date.now());
+  await tracker.check();
+  const ids = tracker.markProcessed(['WEB-1']);
+  assert.equal(ids.length, 1);
+  switchTo(other);
+  switchTo(jira);
+  assert.equal(tracker.find('WEB-1').changes[0].processed, true);
+  tracker.unmark(ids);
+  assert.equal(tracker.find('WEB-1').changes[0].processed, true);
+  const again = tracker.markProcessed(['WEB-1']); // nothing pending: nothing to undo either
+  assert.deepEqual(again, []);
+});
+
+test('the site of the stored list is the configured host, whatever the file says', async t => {
+  const { jira, tracker, store } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  const host = new URL(jira.url).host;
+  const edited = { ...JSON.parse(JSON.stringify(store.data)), site: 'unrelated.example' };
+  assert.equal(ensureShape(JSON.parse(JSON.stringify(edited))).site, host);
+  store.data = ensureShape(edited);
+  const gen = tracker.credentialsGen;
+  const entry = tracker.find('WEB-1');
+  tracker.saveSettings({ theme: 'dark' }); // an unrelated save must not swap the list
+  assert.equal(tracker.find('WEB-1'), entry);
+  assert.equal(tracker.credentialsGen, gen);
+  assert.deepEqual(tracker.data.sites, []);
+});
+
+test('storage from before: the Stale list is from the configured host, and a list of another site is dropped', () => {
+  const old = { version: 4, settings: { baseUrl: 'https://one.example' }, stale: { issues: [{ key: 'A-1' }], fetchedAt: 5, error: null } };
+  const d = ensureShape(old);
+  assert.equal(d.stale.site, 'one.example');
+  assert.deepEqual(d.stale.issues.map(i => i.key), ['A-1']);
+  const foreign = ensureShape({ version: 5, settings: { baseUrl: 'https://one.example' }, site: 'one.example', stale: { issues: [{ key: 'B-1' }], fetchedAt: 5, error: 'x', warning: 'w', truncated: true, site: 'two.example' } });
+  assert.deepEqual(foreign.stale, { issues: [], fetchedAt: null, error: null, site: 'one.example' });
+});
+
+test('the saved lists of other sites carry no mention flags of the current account', () => {
+  const comment = { id: 'c1', field: 'comment', at: 1, mentions: [{ accountId: 'me' }], mentionsMe: true, processed: false };
+  const entry = () => ({ key: 'A-1', changes: [{ ...comment }] });
+  const d = ensureShape({ version: 5, settings: { baseUrl: 'https://one.example' }, me: { accountId: 'me' }, tracked: [entry()], sites: [{ host: 'two.example', tracked: [entry()] }] });
+  assert.equal(d.tracked[0].changes[0].mentionsMe, true);
+  assert.equal('mentionsMe' in d.sites[0].tracked[0].changes[0], false);
+});
+
+test('the first site entered adopts the list held while no URL was set; a later site starts empty', async t => {
+  const { jira, other, tracker, store } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  store.data = ensureShape({ ...JSON.parse(JSON.stringify(store.data)), settings: { ...store.data.settings, baseUrl: '' } }); // refused URL in old storage: tracked issues, no URL
+  assert.equal(store.data.site, '');
+  assert.equal(tracker.data.tracked.length, 1);
+  tracker.saveSettings({ baseUrl: jira.url, token: 'tok' });
+  assert.deepEqual(tracker.data.tracked.map(x => x.key), ['WEB-1']);
+  assert.deepEqual(tracker.data.sites, []);
+  tracker.saveSettings({ baseUrl: other.url, token: 'tok' });
+  assert.deepEqual(tracker.data.tracked, []);
+  assert.deepEqual(tracker.data.sites.map(s => s.host), [new URL(jira.url).host]);
+});
+
+test('issue types asked of the previous site are dropped, not remembered for the new one', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  other.addIssue({ key: 'WEB-9', summary: 'Site B' });
+  const asking = tracker.issueTypes('WEB');
+  switchTo(other);
+  assert.deepEqual(await asking, { ok: false, error: 'The Jira site changed while this was running.' });
+  assert.equal(tracker.typeCache.size, 0);
+  assert.equal((await tracker.issueTypes('WEB')).ok, true);
+  assert.equal(tracker.typeCache.size, 1);
+});
+
+test('an Activity answer from the previous site is neither cached nor shown for the new one', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  jira.comment('WEB-1', 'Site A comment', jira.people.alex);
+  other.addIssue({ key: 'WEB-1', summary: 'Site B' });
+  const asking = tracker.activity('WEB-1');
+  switchTo(other);
+  assert.equal((await asking).ok, false);
+  assert.equal(tracker.activityCache.size, 0);
+});
+
+test('a note that becomes an issue on the previous site is not tracked on the new one', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  jira.addIssue({ key: 'WEB-2', summary: 'Other' });
+  other.addIssue({ key: 'WEB-3', summary: 'Site B: same key as the issue created on site A' });
+  tracker.saveSettings({ notesProject: 'WEB' });
+  const note = tracker.addNote('Fix it');
+  const creating = tracker.createIssueFromNote(note.id);
+  switchTo(other);
+  const r = await creating;
+  assert.equal(r.key, 'WEB-3');
+  assert.equal(r.tracked, false);
+  assert.equal(r.error, 'The Jira site changed while this was running.');
+  assert.deepEqual(tracker.data.tracked, []);
+});
+
+/* ---------- a switch of site during the failure paths of a check ---------- */
+
+/** Wraps every client call: `during.<method>` runs while that request is on its way (a switch of site, for these tests). */
+function interceptClient(tracker, during) {
+  const real = tracker.getClient;
+  tracker.getClient = () => {
+    const client = real();
+    return Object.fromEntries(Object.entries(client).map(([name, fn]) => [name, async (...args) => {
+      if (during[name]) await during[name](...args);
+      return fn(...args);
+    }]));
+  };
+}
+
+test('a switch of site while the 404 re-check is on its way: nothing is recorded, from a snapshot or otherwise', async t => {
+  const { jira, other, tracker, notes, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  const seenUntil = tracker.find('WEB-1').seenUntil;
+  jira.comment('WEB-1', 'Site A news', jira.people.alex, Date.now());
+  let vanished = false;
+  let switched = false;
+  interceptClient(tracker, {
+    changelog: key => { if (!vanished) { vanished = true; jira.remove(key); } }, // a 404 on site A, so the re-check asks
+    bulkFetch: () => { if (vanished && !switched) { switched = true; jira.restore('WEB-1'); switchTo(other); } },
+  });
+  const r = await tracker.check();
+  assert.equal(switched, true);
+  assert.deepEqual(r, { ok: true, found: 0 }); // an answer of the site we left is dropped
+  assert.deepEqual(tracker.data.tracked, []);
+  assert.deepEqual(notes, []);
+  switchTo(jira);
+  assert.deepEqual(tracker.find('WEB-1').changes, []); // the list of site A is as it was
+  assert.equal(tracker.find('WEB-1').seenUntil, seenUntil);
+});
+
+test('a switch of site while /myself is asked about a missing issue: it is neither recorded nor announced', async t => {
+  const { jira, other, tracker, notes, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  assert.equal((await tracker.check()).ok, true); // the account is known now, so /myself is only asked about the missing issue
+  jira.remove('WEB-1');
+  let asked = 0;
+  interceptClient(tracker, { myself: () => { asked++; switchTo(other); } });
+  const r = await tracker.check();
+  assert.equal(asked, 1);
+  assert.deepEqual(r, { ok: true, found: 0 });
+  assert.deepEqual(tracker.data.tracked, []);
+  assert.deepEqual(notes, []);
+  switchTo(jira);
+  const entry = tracker.find('WEB-1');
+  assert.equal(entry.missingSince, undefined);
+  assert.deepEqual(entry.changes, []);
 });

@@ -11,7 +11,7 @@ const ROOT = path.join(__dirname, '..', '..', 'src');
 const SCRIPTS = [
   'shared/keys.js', 'shared/diff.js',
   'shared/locales/en.js', 'shared/locales/nl.js', 'shared/locales/fr.js', 'shared/locales/de.js', 'shared/locales/es.js',
-  'shared/i18n.js', 'shared/inbox.js', 'shared/change.js', 'shared/rules.js',
+  'shared/i18n.js', 'shared/inbox.js', 'shared/text.js', 'shared/change.js', 'shared/rules.js',
   'renderer/actions.js', 'renderer/reveal.js', 'renderer/app.js',
 ];
 

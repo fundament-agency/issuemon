@@ -2,8 +2,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  ISSUE_FIELDS, parseJiraDate, normalizeIssue, changesFromChangelog, changesFromComments, changesFromSnapshots, adfToText, staleJql, excludedProject,
+  ISSUE_FIELDS, parseJiraDate, normalizeIssue, changesFromChangelog, changesFromComments, changesFromSnapshots, adfToText, staleJql, unknownStatuses, excludedProject,
 } = require('../src/main/changes');
+const { jqlList } = require('./support/mock-jira');
 
 test('parseJiraDate understands Jira offsets without a colon', () => {
   assert.equal(parseJiraDate('2026-10-09T13:02:11.123+0200'), Date.UTC(2026, 9, 9, 11, 2, 11, 123));
@@ -65,6 +66,8 @@ test('normalizeIssue converts an ADF description to text and truncates at 2000 c
   const adf = text => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
   assert.equal(normalizeIssue({ id: 1, key: 'WEB-1', fields: { description: adf('First line') } }).description, 'First line');
   assert.equal(normalizeIssue({ id: 1, key: 'WEB-1', fields: { description: adf('x'.repeat(2500)) } }).description.length, 2000);
+  const cut = normalizeIssue({ id: 1, key: 'WEB-1', fields: { description: adf(`${'x'.repeat(1999)}🚀`) } }).description;
+  assert.equal(cut, 'x'.repeat(1999)); // an emoji at the cut stays out whole
   assert.equal(normalizeIssue({ id: 1, key: 'WEB-1', fields: {} }).description, '');
   assert.equal(normalizeIssue({ id: 1, key: 'WEB-1', fields: { description: null } }).description, '');
 });
@@ -221,6 +224,43 @@ test('staleJql: Backlog is just a status, without duplicates and with statuses t
   assert.equal(staleJql({ staleDays: 14, excluded: ['Closed', 'On hold'], skip: ['on hold'] }), 'assignee = currentUser() AND statusCategory != Done AND status NOT IN ("Closed") AND updated <= -14d ORDER BY updated ASC');
 });
 
+test('staleJql: backslashes and double quotes reach Jira exactly as typed', () => {
+  const excluded = ['On hold\\', 'Say "hi"', 'C:\\temp\\"x"', "Won't Fix"];
+  const jql = staleJql({ staleDays: 14, excluded });
+  assert.match(jql, /"On hold\\\\", "Say \\"hi\\""/);
+  assert.deepEqual(jqlList(jql, 'status\\s+NOT\\s+IN'), excluded); // read back like Jira does
+  assert.deepEqual(jqlList(staleJql({ staleDays: 14, excluded: [], people: ['a\\b"c'] }), 'assignee\\s+IN'), ['a\\b"c']);
+});
+
+test('mock Jira reads JQL strings strictly: an unterminated string is an error', () => {
+  assert.throws(() => jqlList('status NOT IN ("On hold\\")', 'status\\s+NOT\\s+IN'), /has not been completed/); // what an unescaped backslash used to produce
+  assert.deepEqual(jqlList('status NOT IN ("A, B", C)', 'status\\s+NOT\\s+IN'), ['A, B', 'C']);
+});
+
+test('unknownStatuses: reads the names from Jira\'s 400, also with quotes in them or in another language', () => {
+  const en = s => `The value '${s}' does not exist for the field 'status'.`;
+  assert.deepEqual(unknownStatuses([en('Live')], ['Live', 'Closed']), ['Live']);
+  assert.deepEqual(unknownStatuses([en("Won't Fix")], ["Won't Fix"]), ["Won't Fix"]);
+  assert.deepEqual(unknownStatuses([en('Live'), en("It's 'on'")], []), ['Live', "It's 'on'"]);
+  assert.deepEqual(unknownStatuses([], ['Live']), []);
+  assert.deepEqual(unknownStatuses(undefined, ['Live']), []);
+  // each message on its own: the lazy match does not run from one message into the next
+  assert.deepEqual(unknownStatuses(["The value 'acc-1' does not exist for the field 'assignee'.", en('Live')], ['Live']), ['Live']);
+});
+
+test('unknownStatuses: in another language the sent name must stand between quotes in Jira\'s message', () => {
+  const sent = ['Closed', "Won't Fix", 'Fix', 'Live'];
+  assert.deepEqual(unknownStatuses(["La valeur « Won't Fix » n'existe pas pour le champ 'status'."], sent), ["Won't Fix"]);
+  assert.deepEqual(unknownStatuses(['Der Wert „Live“ existiert nicht für das Feld „status“.'], sent), ['Live']);
+  assert.deepEqual(unknownStatuses(['El valor “live” no existe.'], sent), ['Live']); // case-insensitive
+  assert.deepEqual(unknownStatuses(['De waarde ‘Live’ bestaat niet.'], sent), ['Live']);
+  assert.deepEqual(unknownStatuses(['De waarde "Closed" en \'Live\' bestaan niet.'], sent), ['Closed', 'Live']);
+  assert.deepEqual(unknownStatuses(["De waarde 'Won't Fix' bestaat niet."], sent), ["Won't Fix"]); // "Fix" alone is not quoted
+  // without quotes a name proves nothing, also not as a whole word or inside one
+  assert.deepEqual(unknownStatuses(['Der Wert Live existiert nicht. Please fix the Closed query.'], sent), []);
+  assert.deepEqual(unknownStatuses(['Something else is wrong.'], sent), []);
+});
+
 test('staleJql: issues of several people, by account id', () => {
   assert.equal(staleJql({ staleDays: 14, excluded: ['Closed'], people: ['acc-me', '712020:abc-def'] }),
     'assignee IN ("acc-me", "712020:abc-def") AND statusCategory != Done AND status NOT IN ("Closed") AND updated <= -14d ORDER BY updated ASC');
@@ -274,4 +314,57 @@ test('a same-text edit that changes the mention account is recorded', () => {
   assert.equal(c.edited, true);
   assert.equal(c.from, '@Sam');
   assert.equal(c.mentions[0].accountId, 'new');
+});
+
+const dateDoc = timestamp => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [
+  { type: 'text', text: 'Due ' }, { type: 'date', attrs: { timestamp } },
+] }] });
+
+test('a date node: a millisecond timestamp gives YYYY-MM-DD, anything else its raw value, and nothing throws', () => {
+  for (const [timestamp, shown] of [
+    [String(Date.UTC(2026, 9, 17, 12)), '2026-10-17'], [Date.UTC(2026, 9, 17, 12), '2026-10-17'],
+    ['2026-10-17', '2026-10-17'], ['abc', 'abc'], ['99999999999999999', '99999999999999999'], [1e17, '100000000000000000'],
+    ['0x10', '0x10'], ['NaN', 'NaN'], ['1e3', '1e3'],
+  ]) {
+    const text = `Due ${shown}`;
+    assert.equal(adfToText(dateDoc(timestamp)), text, JSON.stringify(timestamp));
+    // In a description: normalizeIssue must not throw
+    assert.equal(normalizeIssue({ id: '10001', key: 'WEB-1', fields: { description: dateDoc(timestamp) } }).description, text);
+    // In a comment: changesFromComments must not throw, and the comment is reported
+    const out = changesFromComments([{ id: '9', author, created: '2026-10-03T10:00:00.000+0000', body: dateDoc(timestamp) }], Date.UTC(2026, 9, 2));
+    assert.deepEqual(out.map(c => c.to), [text]);
+  }
+  // No usable value: nothing to show
+  for (const timestamp of [undefined, null, '', {}, ['x']]) assert.equal(adfToText(dateDoc(timestamp)), 'Due', JSON.stringify(timestamp));
+});
+
+test('adfToText: schema-valid nodes with missing or odd attributes never throw', () => {
+  const doc = content => ({ type: 'doc', version: 1, content });
+  const odd = [
+    { type: 'mention', attrs: { text: 5, id: {} } },
+    { type: 'mention', attrs: null },
+    { type: 'emoji', attrs: { text: 5, shortName: {} } },
+    { type: 'emoji' },
+    { type: 'inlineCard', attrs: { url: 7 } },
+    { type: 'blockCard', attrs: [] },
+    { type: 'status', attrs: { text: {} } },
+    { type: 'status', attrs: 'x' },
+    { type: 'text', text: 5 },
+    { type: 'text' },
+    { type: 'date' },
+    { type: 'paragraph', content: 'oops' },
+    { type: 'paragraph', content: [null, 5, 'raw', {}] },
+    { type: 'bulletList', content: [null, { type: 'listItem' }, 5] },
+    { type: 'table', content: [null, 5, { type: 'tableRow' }, { type: 'tableRow', content: [null, { type: 'tableCell' }] }] },
+    { type: 5 },
+    { type: 'table', content: 'oops' },
+    { type: 'orderedList', content: {} },
+  ];
+  for (const node of odd) {
+    assert.equal(typeof adfToText(doc([node])), 'string', JSON.stringify(node));
+    assert.equal(typeof adfToText(doc([{ type: 'paragraph', content: [node] }])), 'string', JSON.stringify(node));
+  }
+  const between = node => adfToText(doc([{ type: 'paragraph', content: [{ type: 'text', text: 'a' }, node, { type: 'text', text: 'b' }] }]));
+  assert.equal(between({ type: 'emoji', attrs: { text: 5 } }), 'ab');
+  assert.equal(between({ type: 'text', text: 5 }), 'ab');
 });

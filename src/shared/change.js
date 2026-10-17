@@ -2,9 +2,9 @@
  * The words come from the translator `t` (shared/i18n.js; English by default).
  * Shared between main (CommonJS) and renderer (classic script). The timeline HTML stays in the renderer. */
 (function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./i18n'));
-  else root.IssuemonChange = factory(root.IssuemonI18n);
-})(typeof self !== 'undefined' ? self : this, function (i18n) {
+  if (typeof module === 'object' && module.exports) module.exports = factory(require('./i18n'), require('./text'));
+  else root.IssuemonChange = factory(root.IssuemonI18n, root.IssuemonText);
+})(typeof self !== 'undefined' ? self : this, function (i18n, shorten) {
   'use strict';
 
   const EN = i18n.createTranslator('en');
@@ -23,7 +23,7 @@
     const label = fieldLabel(c, t);
     return t('meta.fieldInSentence') === 'lower' ? label.toLocaleLowerCase(t.locale) : label;
   };
-  const clip = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+  const { clip } = shorten; // cuts between grapheme clusters, so never inside an emoji
   const firstName = p => p.name.trim().split(/\s+/)[0];
 
   /** Whether two display names are the same person: trimmed and case-insensitive; an empty name never matches. */

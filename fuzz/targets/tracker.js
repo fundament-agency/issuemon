@@ -303,7 +303,7 @@ function checkShape(world) {
   }
 }
 
-/** Two sites: a tracked issue stays the issue it was on its own site, and the identity is the connected site's account. */
+/** Two sites: a tracked issue stays the issue it was on its own site (in the active list and in the saved ones), the Stale list and the identity are the connected site's. */
 function checkSites(world, ctx) {
   if (world.sites.length < 2) return;
   for (const t of world.tracker.data.tracked) {
@@ -312,7 +312,23 @@ function checkSites(world, ctx) {
     const fromB = t.issue.summary.startsWith('Site B');
     if (fromB !== (home === 1)) fail('foreign-issue', `${t.key}, tracked on site ${'AB'[home]}, now shows "${t.issue.summary}" from the other site`, { id: t.id, key: t.key });
   }
-  const me = world.tracker.data.me;
+  const { data } = world.tracker;
+  const hostOf = n => new URL(world.sites[n].url).host;
+  if (data.site !== hostOf(ctx.active)) fail('wrong-site', `connected to site ${'AB'[ctx.active]} but the tracked list is of ${data.site}`);
+  // The lists of the sites we left: each holds only issues of its own site, and none is the active site's.
+  for (const saved of data.sites) {
+    if (saved.host === data.site) fail('saved-active-site', `the list of ${saved.host} is saved while it is the active one`);
+    for (const t of saved.tracked) {
+      const home = ctx.home.get(t);
+      if (home == null || !t.issue) continue;
+      if (saved.host !== hostOf(home)) fail('saved-foreign-list', `${t.key}, tracked on site ${'AB'[home]}, is saved under ${saved.host}`, { id: t.id, key: t.key });
+      if (t.issue.summary.startsWith('Site B') !== (home === 1)) fail('foreign-issue', `${t.key}, tracked on site ${'AB'[home]}, now shows "${t.issue.summary}" from the other site`, { id: t.id, key: t.key });
+    }
+  }
+  // The Stale list shown is the connected site's.
+  if (data.stale.site !== data.site) fail('stale-foreign', `the Stale list is from ${data.stale.site}, the connected site is ${data.site}`);
+  for (const i of data.stale.issues) if (String(i.summary).startsWith('Site B') !== (ctx.active === 1)) fail('stale-foreign', `the Stale list of site ${'AB'[ctx.active]} holds ${i.key}, "${i.summary}"`);
+  const me = data.me;
   const want = world.sites[ctx.active].people.me.accountId;
   if (me && me.accountId !== want) fail('wrong-account', `connected to site ${'AB'[ctx.active]} but the identity is ${me.accountId}`);
 }
@@ -422,7 +438,7 @@ const properties = [
   property('tracker.serial', 'Jira activity and user actions one at a time: no duplicates, nothing lost, every pending change notified, restarts change nothing.', { length: 60 }, 300),
   property('tracker.faults', 'Same, with transient failures (5xx, 429, network, a 200 that is no answer) and Jira changing during a check.', { length: 60, faults: true }, 400),
   property('tracker.concurrent', 'Same, with user actions and Jira activity overlapping a running check.', { length: 40, concurrent: true }, 300),
-  property('tracker.sites', 'Switching between two Jira sites, also during a check: a tracked issue stays itself and the identity follows the site.', { length: 30, sites: true, concurrent: true }, 200),
+  property('tracker.sites', 'Switching between two Jira sites, also during a check: a tracked issue stays itself, each site keeps its own list and the identity follows the site.', { length: 30, sites: true, concurrent: true }, 200),
 ];
 
 module.exports = { properties };

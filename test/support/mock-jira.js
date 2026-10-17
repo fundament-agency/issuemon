@@ -17,17 +17,45 @@ const ISSUE_TYPES = [
   { id: '10004', name: 'Sub-task', subtask: true, hierarchyLevel: -1 },
 ];
 const jiraDate = ms => new Date(ms).toISOString().replace('Z', '+0000');
-const adf = text => ({ type: 'doc', version: 1, content: String(text).split('\n\n').map(p => ({ type: 'paragraph', content: [{ type: 'text', text: p }] })) });
+/** Plain text becomes a document; an object is taken as the ADF itself (to serve odd but schema-valid content). */
+const adf = text => (text && typeof text === 'object' ? text : { type: 'doc', version: 1, content: String(text).split('\n\n').map(p => ({ type: 'paragraph', content: [{ type: 'text', text: p }] })) });
 
 /** Append real ADF mentions; plain @names in the text remain text nodes. */
 function commentBody(text, mentions) {
   const body = adf(text);
+  if (body === text) return body;
   const content = body.content.at(-1).content;
   for (const person of mentions) content.push(
     { type: 'text', text: ' ' },
     { type: 'mention', attrs: { id: person.accountId, text: `@${person.displayName}` } },
   );
   return body;
+}
+
+/** The values of a JQL list such as `status NOT IN (...)` (`before` is a regex source for what precedes the parenthesis), or null when
+    the list is missing. Strings are read like Jira does: \" and \\ are escapes. Throws on an unterminated string, which Jira rejects with a 400. */
+function jqlList(jql, before) {
+  const strings = [];
+  let masked = '';
+  for (let i = 0; i < jql.length;) {
+    const quote = jql[i];
+    if (quote !== '"' && quote !== "'") { masked += jql[i++]; continue; }
+    let s = '';
+    for (i++; ; i++) {
+      if (i >= jql.length) throw new Error(`The quoted string '${s}' has not been completed.`);
+      if (jql[i] === '\\' && i + 1 < jql.length) { s += jql[++i]; continue; }
+      if (jql[i] === quote) break;
+      s += jql[i];
+    }
+    i++;
+    masked += `\u0000${strings.push(s) - 1}\u0000`; // a placeholder where the string was
+  }
+  const list = masked.match(new RegExp(`${before}\\s*\\(([^)]*)\\)`, 'i'));
+  if (!list) return null;
+  return list[1].split(',').map(x => x.trim()).filter(Boolean).map(x => {
+    const placeholder = x.match(/^\u0000(\d+)\u0000$/);
+    return placeholder ? strings[Number(placeholder[1])] : x;
+  });
 }
 
 function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date.now, projects = ['WEB', 'OPS'] } = {}) {
@@ -47,6 +75,7 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
   const issues = new Map();
   const removed = new Map(); // key → issue taken away by remove(), for restore()
   const requests = [];
+  const failures = []; // see fail()
   const projectKeys = new Set(projects); // where you may create issues; addIssue adds the project of the key
   let seq = 10_000;
   let server = null;
@@ -182,14 +211,13 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     let list = [...issues.values()];
     const nobody = /assignee\s+IS\s+EMPTY/i.test(jql); // "(… OR assignee IS EMPTY)": issues without an assignee too
     if (/assignee\s*=\s*currentUser\(\)/i.test(jql)) list = list.filter(i => i.fields.assignee?.accountId === people.me.accountId || (nobody && !i.fields.assignee));
-    const assignees = jql.match(/assignee\s+IN\s*\(([^)]*)\)/i);
-    if (assignees) {
-      const ids = assignees[1].split(',').map(s => s.trim().replace(/^"|"$/g, ''));
+    const ids = jqlList(jql, 'assignee\\s+IN');
+    if (ids) {
       list = list.filter(i => ids.includes(i.fields.assignee?.accountId) || (nobody && !i.fields.assignee));
     }
-    const notIn = jql.match(/status\s+NOT\s+IN\s*\(([^)]*)\)/i);
+    const notIn = jqlList(jql, 'status\\s+NOT\\s+IN');
     if (notIn) {
-      const ex = notIn[1].split(',').map(s => s.trim().replace(/^"|"$/g, '').toLowerCase());
+      const ex = notIn.map(s => s.toLowerCase());
       list = list.filter(i => !ex.includes(i.fields.status.toLowerCase()));
     }
     if (/statusCategory\s*!=\s*Done/i.test(jql)) list = list.filter(i => (CATEGORY[i.fields.status] || 'indeterminate') !== 'done');
@@ -238,6 +266,18 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
       return json(res, 401, { errorMessages: ['Client must be authenticated to access this resource.'] });
     }
 
+    const failure = failures.find(f => f.left > 0 && f.path.test(url.pathname) && (!f.key || url.pathname.includes(`/issue/${f.key}/`)));
+    if (failure) {
+      failure.left--;
+      const { status, body: failBody } = failure;
+      if (typeof failBody === 'string') {
+        res.writeHead(status, { 'Content-Type': failBody.startsWith('<') ? 'text/html' : 'application/json', ...failure.headers });
+        return res.end(failBody);
+      }
+      res.writeHead(status, { 'Content-Type': 'application/json', ...failure.headers });
+      return res.end(JSON.stringify(failBody));
+    }
+
     if (req.method === 'GET' && url.pathname === '/rest/api/3/myself') {
       if (mock.myselfStatus) return json(res, mock.myselfStatus, { errorMessages: ['Mock: /myself fails.'] });
       return json(res, 200, people.me);
@@ -269,11 +309,17 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
       return json(res, 201, { id: issue.id, key: issue.key, self: `${mock.url}/rest/api/3/issue/${issue.id}` });
     }
     if (req.method === 'POST' && url.pathname === '/rest/api/3/search/jql') {
+      if (mock.searchStatus) return json(res, mock.searchStatus, { errorMessages: ['Mock: search fails.'], errors: {} });
       const jql = body?.jql || '';
       const known = new Set([...Object.keys(CATEGORY), ...[...issues.values()].map(i => i.fields.status)].map(s => s.toLowerCase()));
-      const named = (jql.match(/status\s+NOT\s+IN\s*\(([^)]*)\)/i)?.[1] || '').split(',').map(s => s.trim().replace(/^"|"$/g, '')).filter(Boolean);
+      let named;
+      try {
+        named = jqlList(jql, 'status\\s+NOT\\s+IN') || [];
+      } catch (err) {
+        return json(res, 400, { errorMessages: [`Error in the JQL Query: ${err.message}`], errors: {} });
+      }
       const unknown = named.filter(s => !known.has(s.toLowerCase()));
-      if (unknown.length) return json(res, 400, { errorMessages: unknown.map(s => `The value '${s}' does not exist for the field 'status'.`), errors: {} });
+      if (unknown.length) return json(res, 400, { errorMessages: unknown.map(mock.unknownStatusText), errors: {} });
       const all = search(jql);
       const start = Number(body?.nextPageToken || 0);
       const size = Math.min(body?.maxResults || 50, 100);
@@ -313,8 +359,21 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     users,
     usersForbidden: false,
     myselfStatus: null, // HTTP status for GET /myself instead of the user, e.g. 500
+    unknownStatusText: s => `The value '${s}' does not exist for the field 'status'.`, // Jira's 400 for an unknown status; other accounts get it in their language
+    searchStatus: null, // HTTP status for POST search/jql instead of the answer, e.g. 400 (a request Jira rejects)
     bulkfetchBody: undefined, // a body to answer every bulkfetch with (status 200), e.g. {} like a proxy would
     issueErrorIds: [], // ids or keys that bulkfetch leaves out of issues and names in issueErrors, as for a retriable error
+    /**
+     * Makes the next `count` requests to an endpoint (myself, bulkfetch, changelog, comment, search) fail, then it works again.
+     * `status` and `body` are what comes back instead: an object is sent as JSON, a string as is (HTML when it starts with `<`;
+     * status 200 with `'{}'` or `'not json'` is a 200 that is no real answer). `key`: only for that issue's changelog or comments.
+     * `headers`: e.g. Retry-After.
+     */
+    fail(endpoint, { count = 1, status = 503, body = { errorMessages: ['Mock: service unavailable.'] }, key = null, headers = {} } = {}) {
+      const path = { myself: /\/myself$/, bulkfetch: /\/bulkfetch$/, changelog: /\/changelog$/, comment: /\/comment$/, search: /\/search\/jql$/ }[endpoint];
+      if (!path) throw new Error(`Mock: unknown endpoint ${endpoint}`);
+      failures.push({ path, left: count, status, body, key, headers });
+    },
     release: APP_VERSION, // the latest release the update check sees; the running version means "up to date"
     addIssue,
     change,
@@ -382,4 +441,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { createMockJira, seedDemo, jiraDate };
+module.exports = { createMockJira, seedDemo, jiraDate, jqlList };

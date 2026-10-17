@@ -1171,6 +1171,47 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1200, 780));
   });
 
+  await t.test('another Jira site has its own tracked list, and switching back restores yours', async () => {
+    const other = createMockJira({ email: 'e2e@example.com', token: 'e2e-token' });
+    const otherUrl = await other.start();
+    try {
+      // Same ids as the issues tracked here (both sites number from 10001), under other keys and with other titles.
+      for (let n = 1; n <= 12; n++) other.addIssue({ key: `ZED-${n}`, summary: `Second site issue ${n}`, status: 'To Do', updated: Date.now() - 86_400_000 });
+      await page.click('[data-view="tracked"]');
+      await page.waitForSelector('[data-row="WEB-1423"]');
+      const rows = () => page.locator('[data-row]').evaluateAll(rs => rs.map(r => r.dataset.row));
+      const before = (await rows()).sort();
+      const total = await page.textContent('.va-nav [data-view="tracked"] .count');
+      assert.ok(before.length >= 5);
+
+      await page.click('[data-view="settings"]');
+      await page.fill('#set-baseUrl', otherUrl);
+      await page.press('#set-baseUrl', 'Tab');
+      await page.click('[data-view="tracked"]');
+      await page.waitForFunction(() => !document.querySelector('[data-row]'));
+      await checkNow();
+      await page.waitForTimeout(150);
+      assert.deepEqual(await rows(), []); // nothing of the second site under an old key, and nothing of the first
+      assert.equal(await page.locator('[data-row^="ZED-"]').count(), 0);
+      const changed = await page.locator('.va-nav [data-view="changed"] .count').first().textContent({ timeout: 500 }).catch(() => null); // no counter at all when nothing changed
+      assert.ok(!changed || changed === '0');
+      await shot('9-other-site-tracked');
+
+      await page.click('[data-view="settings"]');
+      await page.fill('#set-baseUrl', url);
+      await page.press('#set-baseUrl', 'Tab');
+      await page.click('[data-view="tracked"]');
+      await page.waitForSelector('[data-row="WEB-1423"]');
+      await checkNow();
+      assert.deepEqual((await rows()).sort(), before);
+      assert.equal(await page.textContent('.va-nav [data-view="tracked"] .count'), total);
+      assert.match(await page.textContent('[data-row="WEB-1423"]'), /WEB-1423/);
+      await shot('10-first-site-restored');
+    } finally {
+      await other.stop();
+    }
+  });
+
   await t.test('state is kept after quitting', async () => {
     await app.evaluate(() => global.__issuemon.tracker.saveSettings({ language: 'nl' })); // the language survives the restart below
     await app.close();

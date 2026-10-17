@@ -1,5 +1,6 @@
 'use strict';
 /* Pure functions: Jira responses → normalized issues and changes. No Electron, no network. */
+const { truncate } = require('../shared/text');
 
 /** Jira dates such as "2026-10-09T13:02:11.123+0200" → epoch ms (or null). */
 function parseJiraDate(value) {
@@ -56,7 +57,7 @@ function normalizeIssue(raw) {
     }),
     project: f.project?.name || null,
     projectKey: f.project?.key || null,
-    description: adfToText(f.description).slice(0, DESCRIPTION_MAX),
+    description: truncate(adfToText(f.description), DESCRIPTION_MAX),
   };
 }
 
@@ -80,17 +81,20 @@ const FIELD_MAP = {
 /* Noise nobody wants to see: backlog order and time tracking. */
 const IGNORED_FIELDS = new Set(['Rank', 'WorklogId', 'timespent', 'timeestimate', 'timeoriginalestimate', 'WorklogTimeSpent', 'Worklog Id']);
 
+const isObject = v => v != null && typeof v === 'object';
+
 /**
  * Changelog histories → changes, only after `since` (exclusive).
  * @returns {Array<{id,at,author,field,label,from,to}>}
  */
 function changesFromChangelog(histories, since) {
   const out = [];
-  for (const h of histories || []) {
+  for (const h of Array.isArray(histories) ? histories : []) {
+    if (!isObject(h)) continue; // a malformed entry is skipped, never a reason to lose the rest
     const at = parseJiraDate(h.created);
     if (at == null || (since != null && at <= since)) continue;
-    (h.items || []).forEach((item, idx) => {
-      if (IGNORED_FIELDS.has(item.field)) return;
+    (Array.isArray(h.items) ? h.items : []).forEach((item, idx) => {
+      if (!isObject(item) || IGNORED_FIELDS.has(item.field)) return;
       out.push({
         id: `h${h.id}-${idx}`,
         at,
@@ -114,7 +118,8 @@ function changesFromChangelog(histories, since) {
  */
 function changesFromComments(comments, since, previous = new Map()) {
   const out = [];
-  for (const c of comments || []) {
+  for (const c of Array.isArray(comments) ? comments : []) {
+    if (!isObject(c)) continue;
     const at = parseJiraDate(c.created);
     if (at == null) continue;
     const { text: to, mentions } = adfContent(c.body);
@@ -162,6 +167,17 @@ function changesFromSnapshots(prev, next) {
     .map(([field, from, to]) => ({ id: `s${at}-${field}`, at, author: null, field, label: field, from, to }));
 }
 
+const str = value => (typeof value === 'string' ? value : '');
+const list = value => (Array.isArray(value) ? value : []);
+
+/** The text of an ADF date node: YYYY-MM-DD for a millisecond timestamp, else the raw value as written (the schema only asks
+    for a string, and REST accepts "2026-10-17"). Never throws. */
+function adfDate(timestamp) {
+  const raw = typeof timestamp === 'number' ? String(timestamp) : str(timestamp);
+  const ms = /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : NaN;
+  return Number.isNaN(new Date(ms).getTime()) ? raw : new Date(ms).toISOString().slice(0, 10);
+}
+
 /** Readable text plus ranges of actual ADF mention nodes. No Jira markup or arbitrary attributes are stored. */
 function adfContent(node) {
   const plain = text => ({ text, mentions: [] });
@@ -181,7 +197,8 @@ function adfContent(node) {
   const trim = part => slice(part, part.text.length - part.text.trimStart().length, part.text.trimEnd().length);
   if (node == null) return plain('');
   if (typeof node === 'string') return plain(node);
-  const kids = () => join((node.content || []).map(adfContent));
+  if (typeof node !== 'object') return plain('');
+  const kids = () => join(list(node.content).map(adfContent));
   const block = () => join([kids(), plain('\n\n')]);
   switch (node.type) {
     case 'doc': {
@@ -195,7 +212,7 @@ function adfContent(node) {
       pieces.push(slice(part, start, part.text.length));
       return trim(join(pieces));
     }
-    case 'text': return plain(node.text || '');
+    case 'text': return plain(str(node.text));
     case 'hardBreak': return plain('\n');
     case 'paragraph':
     case 'heading':
@@ -203,25 +220,25 @@ function adfContent(node) {
     case 'panel':
     case 'codeBlock': return block();
     case 'bulletList':
-    case 'orderedList': return join([join((node.content || []).map((li, i) => join([
+    case 'orderedList': return join([join(list(node.content).map((li, i) => join([
       plain(node.type === 'orderedList' ? `${i + 1}. ` : '• '), trim(adfContent(li)),
     ])), '\n'), plain('\n\n')]);
     case 'listItem': return kids();
     case 'mention': {
-      const text = node.attrs?.text || '@someone'; // Jira content, not UI chrome
+      const text = str(node.attrs?.text) || '@someone'; // Jira content, not UI chrome
       const accountId = node.attrs?.id;
       return { text, mentions: typeof accountId === 'string' && accountId ? [{ start: 0, end: text.length, accountId }] : [] };
     }
-    case 'emoji': return plain(node.attrs?.text || node.attrs?.shortName || '');
+    case 'emoji': return plain(str(node.attrs?.text) || str(node.attrs?.shortName));
     case 'inlineCard':
-    case 'blockCard': return plain(node.attrs?.url || '');
-    case 'status': return plain(`[${node.attrs?.text || ''}]`);
-    case 'date': return plain(node.attrs?.timestamp ? new Date(+node.attrs.timestamp).toISOString().slice(0, 10) : '');
+    case 'blockCard': return plain(str(node.attrs?.url));
+    case 'status': return plain(`[${str(node.attrs?.text)}]`);
+    case 'date': return plain(adfDate(node.attrs?.timestamp));
     case 'mediaSingle':
     case 'mediaGroup': return plain('[attachment]\n\n');
     case 'media': return plain('');
     case 'rule': return plain('———\n\n');
-    case 'table': return join([join((node.content || []).map(row => join((row.content || []).map(cell => trim(adfContent(cell))), ' | ')), '\n'), plain('\n\n')]);
+    case 'table': return join([join(list(node.content).map(row => join(list(row?.content).map(cell => trim(adfContent(cell))), ' | ')), '\n'), plain('\n\n')]);
     default: return kids();
   }
 }
@@ -245,7 +262,8 @@ function excludedProject({ excludedProjects = [] }) {
   return issue => patterns.some(r => r.test(issue.project || '') || r.test(issue.projectKey || ''));
 }
 
-const quote = s => `"${String(s).replace(/"/g, '\\"')}"`;
+/** A JQL string: Jira reads \ and " inside quotes as escapes, so both are escaped and the value arrives exactly as typed. */
+const quote = s => `"${String(s).replace(/[\\"]/g, '\\$&')}"`;
 
 /** JQL for the stale list: issues of `people` (account ids), or your own without people; with staleUnassigned also
     issues without an assignee. Ordered by last updated: oldest on top by default, newest on top with staleSort 'newest'. */
@@ -260,6 +278,22 @@ function staleJql({ staleDays, excluded, people = [], skip = [], staleSort, stal
   return `${who}${notDone}${notIn} AND updated <= -${days}d ORDER BY updated ${staleSort === 'newest' ? 'DESC' : 'ASC'}`;
 }
 
+/** Quote characters around a name in a message: '…', "…", «…», „…“, “…”, ‘…’ and the like. */
+const QUOTE_PAIRS = [["'", "'"], ['"', '"'], ['«', '»'], ['»', '«'], ['„', '“'], ['„', '”'], ['“', '”'], ['‘', '’']];
+const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The statuses Jira's 400 says do not exist, out of the `sent` excluded statuses. `details` are Jira's own messages (JiraError.details),
+    not IssueMon's wording around them. Jira words it as "The value 'Won't Fix' does not exist for the field 'status'." (the name may
+    hold quotes, so the match runs up to the closing words, per message). In another language that fails; then the sent names that
+    occur between quote characters in a message count. Without quotes a name proves nothing: "Fix" is also part of a word. */
+function unknownStatuses(details, sent) {
+  const messages = array(details).map(String);
+  const listed = messages.flatMap(m => [...m.matchAll(/value '(.+?)' does not exist for the field 'status'/gi)].map(x => x[1]));
+  if (listed.length) return listed;
+  return sent.filter(name => messages.some(m => QUOTE_PAIRS.some(([open, close]) =>
+    new RegExp(`${escapeRegExp(open)}\\s*${escapeRegExp(name)}\\s*${escapeRegExp(close)}`, 'i').test(m))));
+}
+
 module.exports = {
   parseJiraDate,
   normalizeIssue,
@@ -269,6 +303,7 @@ module.exports = {
   changesFromSnapshots,
   adfToText,
   staleJql,
+  unknownStatuses,
   staleExcluded,
   excludedProject,
   ISSUE_FIELDS,
