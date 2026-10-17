@@ -100,6 +100,7 @@
   'error.titleRequired': 'Donnez un titre au ticket.',
   'error.notesProjectRequired': 'Définissez d’abord dans les Réglages un projet pour les nouveaux tickets.',
   'error.newIssueUnavailable': 'Impossible de récupérer le nouveau ticket (pour l’instant).',
+  'error.siteChanged': 'Le site Jira a changé pendant l’opération.',
   'error.notificationsUnsupported': 'Les notifications ne sont pas prises en charge sur ce système.',
   'error.startup': 'Impossible de démarrer IssueMon',
 

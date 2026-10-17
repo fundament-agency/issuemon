@@ -100,6 +100,7 @@
   'error.titleRequired': 'Ponle un título a la incidencia.',
   'error.notesProjectRequired': 'Elige primero en Ajustes un proyecto para las incidencias nuevas.',
   'error.newIssueUnavailable': 'No se puede obtener (todavía) la incidencia nueva.',
+  'error.siteChanged': 'El sitio de Jira cambió mientras esto se ejecutaba.',
   'error.notificationsUnsupported': 'Este sistema no admite notificaciones.',
   'error.startup': 'IssueMon no puede iniciarse',
 

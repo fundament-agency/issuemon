@@ -17,12 +17,14 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const HISTORY_LIMIT = 60; // processed changes we keep per issue
 const PARALLEL = 4;
+const MARKED_MAX = 10_000; // change ids that Undo of Processed can still reach
 const CACHE_MAX = 200; // items per cache (activity, issue types)
 /** Retry delays after consecutive transient errors; never longer than the configured interval. */
 const BACKOFF = [30_000, MIN, 2 * MIN, 5 * MIN];
 /** No connection (including a request timeout, which jira.js reports as 'network'), a server error, or an error with neither status nor code (not from the Jira client, e.g. an unreadable response): such an error will probably go away soon. */
 const isTransient = err => err.code === 'network' || err.status >= 500 || (err.status == null && !err.code);
 
+const NO_STALE = { issues: [], fetchedAt: null, error: null };
 const DEFAULT_SETTINGS = {
   baseUrl: '',
   email: '',
@@ -45,11 +47,11 @@ const DEFAULT_SETTINGS = {
 };
 const STALE_SORTS = ['newest', 'oldest'];
 
-/** Fills in missing fields (new install or older storage) and migrates older storage to version 4. */
+/** Fills in missing fields (new install or older storage) and migrates older storage to version 5. */
 function ensureShape(data) {
   const d = data && typeof data === 'object' ? data : {};
   const from = Number.isInteger(d.version) ? d.version : 0;
-  d.version = 4;
+  d.version = 5;
   const stored = { ...(d.settings || {}) };
   // Version 1 → 2 (detected by the old fields, not by the version number): the Backlog flag became a regular status and the project fields for name and key became one.
   if ('excludeBacklog' in stored) {
@@ -75,20 +77,38 @@ function ensureShape(data) {
   d.settings.staleFilter = idList(d.settings.staleFilter); // the renderer relies on an array
   if (!LANGUAGE_SETTINGS.includes(d.settings.language)) d.settings.language = 'system';
   d.me = d.me || null;
-  d.tracked = Array.isArray(d.tracked) ? d.tracked.filter(t => t && t.key && !t.loading) : [];
-  for (const t of d.tracked) {
-    t.changes = Array.isArray(t.changes) ? t.changes : [];
-    for (const c of t.changes) updateMentionFlag(c, d.me?.accountId);
-    // Version 3 → 4: up to 0.1.2 an issue that was missing had an error and nothing else (checkTracked is the only place that sets one): it is not announced after the update.
-    if (from < 4 && t.error && !t.missingSince) t.missingSince = d.lastCheck || Date.now();
-  }
+  // Version 4 → 5: a tracked list per site (host). `tracked` is the list of the site in `site`, the rest are kept in `sites`.
+  // The list in `tracked` belongs to the host that is configured now: the stored `site` is not trusted, so a file that was edited
+  // or written by another version cannot make a later save swap the list without a change of credentials.
+  d.site = hostOf(d.settings.baseUrl);
+  d.tracked = shapeTracked(d.tracked, d.me, from, d.lastCheck);
+  const seen = new Set();
+  d.sites = (Array.isArray(d.sites) ? d.sites : [])
+    .filter(s => s && typeof s.host === 'string' && !seen.has(s.host) && seen.add(s.host))
+    .map(s => ({ host: s.host, tracked: shapeTracked(s.tracked, null, from, d.lastCheck) })) // not the connected account's: no mention flags
+    .filter(s => s.tracked.length);
   d.reconnected = d.reconnected === true;
-  d.stale = { issues: [], fetchedAt: null, error: null, ...(d.stale || {}) };
+  d.stale = { ...NO_STALE, ...(d.stale || {}) };
+  // The site the list was fetched from. Storage from before has none: that list is from the configured host. A list of another site is not kept.
+  if (typeof d.stale.site !== 'string') d.stale.site = d.site;
+  if (d.stale.site !== d.site) d.stale = { ...NO_STALE, site: d.site };
   d.notes = Array.isArray(d.notes) ? d.notes.filter(n => n && n.id && n.text) : [];
   for (const n of d.notes) delete n.creating;
   d.lastCheck = d.lastCheck || null;
   d.updates = { lastCheck: null, latest: null, url: null, dismissed: null, ...(d.updates && typeof d.updates === 'object' ? d.updates : {}) };
   return d;
+}
+
+/** A stored tracked list: only real entries, each with a changes array, mention flags for the known account, and the 0.1.2 migration. */
+function shapeTracked(list, me, from, lastCheck) {
+  const tracked = Array.isArray(list) ? list.filter(t => t && t.key && !t.loading) : [];
+  for (const t of tracked) {
+    t.changes = Array.isArray(t.changes) ? t.changes : [];
+    for (const c of t.changes) updateMentionFlag(c, me?.accountId);
+    // Version 3 → 4: up to 0.1.2 an issue that was missing had an error and nothing else (checkTracked is the only place that sets one): it is not announced after the update.
+    if (from < 4 && t.error && !t.missingSince) t.missingSince = lastCheck || Date.now();
+  }
+  return tracked;
 }
 
 /** Mention flags follow the connected account; legacy records without mention ids cannot address it. */
@@ -184,11 +204,13 @@ class Tracker extends EventEmitter {
     this.failures = 0; // consecutive transient errors, for the backoff
     this.status = { state: 'idle', message: null };
     this.removed = new Map();
+    this.marked = new Set(); // change ids of the last Processed actions, for Undo; they belong to the list of the current site
     this.removedNotes = new Map();
     this.typeCache = new Map(); // project -> { at, types }, not persisted
     this.activityCache = new Map(); // key -> { at, result } (failed attempts too), not persisted
     this.staleGen = 0; // counter of refreshStale requests, to discard outdated responses
     this.credentialsGen = 0; // counter of credential changes: a check that began before one asked the old site
+    this.listGen = 0; // counter of switches to another site's tracked list: a request that began before one belongs to the old site
     this.people = NO_PEOPLE; // people list for the Stale setting, not persisted
     this.env = env; // fixed info for the renderer, e.g. { platform, packaged, locale }
     this.version = version;
@@ -515,7 +537,7 @@ class Tracker extends EventEmitter {
           const warning = skip.length ? this.t('stale.unknownStatus', { n: skip.length, statuses: skip.join(', ') }) : null;
           if (gen !== this.staleGen) return;
           const skipProject = excludedProject(this.settings);
-          this.data.stale = { issues: issues.filter(i => !skipProject(i)), truncated, fetchedAt: this.now(), error: null, warning };
+          this.data.stale = { issues: issues.filter(i => !skipProject(i)), truncated, fetchedAt: this.now(), error: null, warning, site: this.data.site };
           return;
         } catch (err) {
           // "The value 'Backlog' does not exist for the field 'status'." → drop that status and try again.
@@ -526,8 +548,11 @@ class Tracker extends EventEmitter {
       }
     } catch (err) {
       if (err.code === 'auth' || err.code === 'network') throw err;
-      // The old list stays on screen, but a warning belongs to the answer it came with, not next to a new error.
-      if (gen === this.staleGen) this.data.stale = { ...this.data.stale, error: err.message, warning: null };
+      if (gen === this.staleGen) {
+        const kept = this.data.stale.site === this.data.site ? this.data.stale : NO_STALE; // never keep what came from another site
+        // The old list stays on screen, but a warning belongs to the answer it came with, not next to a new error.
+        this.data.stale = { ...kept, error: err.message, warning: null, site: this.data.site };
+      }
     }
   }
 
@@ -583,6 +608,7 @@ class Tracker extends EventEmitter {
     if (!wanted.length) return { ok: true, added: [], duplicates, notFound: [] };
 
     const now = this.now();
+    const listGen = this.listGen; // a switch to another site's list drops the placeholders: the answer is for the site we left
     const placeholders = wanted.map(key => ({ key, addedAt: now, loading: true, changes: [] }));
     this.data.tracked.unshift(...placeholders);
     this.changed();
@@ -592,10 +618,12 @@ class Tracker extends EventEmitter {
     try {
       ({ issues } = await client.bulkFetch(wanted));
     } catch (err) {
+      if (listGen !== this.listGen) return { ok: false, error: this.t('error.siteChanged') };
       placeholders.forEach(drop);
       this.changed();
       return { ok: false, error: err.message };
     }
+    if (listGen !== this.listGen) return { ok: false, error: this.t('error.siteChanged') };
 
     const byKey = new Map(issues.map(i => [i.key, i]));
     const added = [];
@@ -625,6 +653,7 @@ class Tracker extends EventEmitter {
     if (this.find(key)) return { ok: true, added: [], duplicates: [key], notFound: [] };
     const issue = this.data.stale.issues.find(i => i.key === key);
     if (!issue) return this.addIssues(key);
+    if (this.data.stale.site !== this.data.site) return { ok: false, error: this.t('error.siteChanged') }; // a list of the previous site holds other issues
     this.data.tracked.unshift({ key, id: issue.id, issue, seenUntil: issue.updated, addedAt: this.now(), lastChecked: this.now(), changes: [] });
     this.store.save();
     this.changed();
@@ -664,14 +693,16 @@ class Tracker extends EventEmitter {
         c.processed = true;
         c.processedAt = now;
         ids.push(c.id);
+        this.marked.add(c.id);
       }
     }
+    while (this.marked.size > MARKED_MAX) this.marked.delete(this.marked.values().next().value);
     if (ids.length) { this.store.save(); this.changed(); }
     return ids;
   }
 
   unmark(ids) {
-    const set = new Set(ids);
+    const set = new Set([].concat(ids).filter(id => this.marked.delete(id)));
     for (const t of this.data.tracked) for (const c of t.changes) if (set.has(c.id)) { c.processed = false; c.processedAt = null; }
     this.store.save();
     this.changed();
@@ -771,8 +802,10 @@ class Tracker extends EventEmitter {
     if (!client) return { ok: false, error: this.t('error.connectFirst') };
     const cached = this.typeCache.get(key);
     if (cached && this.now() - cached.at < HOUR) return { ok: true, types: cached.types };
+    const listGen = this.listGen;
     try {
       const types = await client.issueTypes(key);
+      if (listGen !== this.listGen) return { ok: false, error: this.t('error.siteChanged') };
       this.remember(this.typeCache, key, { at: this.now(), types });
       return { ok: true, types };
     } catch (err) {
@@ -792,8 +825,10 @@ class Tracker extends EventEmitter {
     if (!client) return { ok: false, error: this.t('error.connectFirst') };
     const cached = this.activityCache.get(key);
     if (cached && this.now() - cached.at < (cached.result.ok ? 10 * MIN : 30e3)) return cached.result;
+    const listGen = this.listGen;
     try {
       const [comments, histories] = await Promise.all([client.comments(key), client.changelog(key)]);
+      if (listGen !== this.listGen) return { ok: false, error: this.t('error.siteChanged'), fetchedAt: this.now() };
       const newest = list => list.reduce((a, b) => (!a || b.at >= a.at ? b : a), null);
       const comment = newest(changesFromComments(comments, null));
       const change = newest(changesFromChangelog(histories, null));
@@ -807,6 +842,7 @@ class Tracker extends EventEmitter {
       return result;
     } catch (err) {
       const result = { ok: false, error: err.message, fetchedAt: this.now() };
+      if (listGen !== this.listGen) return { ...result, error: this.t('error.siteChanged') };
       this.remember(this.activityCache, key, { at: this.now(), result });
       return result;
     }
@@ -827,6 +863,7 @@ class Tracker extends EventEmitter {
     const client = this.getClient();
     if (!client) return { ok: false, error: this.t('error.connectFirst') };
 
+    const listGen = this.listGen;
     note.creating = true;
     this.changed();
     let created;
@@ -841,6 +878,7 @@ class Tracker extends EventEmitter {
     // The issue exists now: remove the note, so one note never produces two issues.
     this.data.notes = this.data.notes.filter(n => n !== note);
     this.store.save();
+    if (listGen !== this.listGen) return { ok: true, key: created.key, tracked: false, error: this.t('error.siteChanged') }; // the issue is on the site we left: not for the new list
     const r = await this.addIssues(created.key);
     if (r.ok && (r.added.includes(created.key) || r.duplicates.includes(created.key))) return { ok: true, key: created.key, tracked: true };
     return { ok: true, key: created.key, tracked: false, error: r.error || this.t('error.newIssueUnavailable') };
@@ -878,6 +916,7 @@ class Tracker extends EventEmitter {
     if ('staleSort' in patch && STALE_SORTS.includes(patch.staleSort)) next.staleSort = patch.staleSort;
     if ('language' in patch && LANGUAGE_SETTINGS.includes(patch.language)) next.language = patch.language;
     this.data.settings = next;
+    if (hostOf(next.baseUrl) !== this.data.site) this.switchSite(hostOf(next.baseUrl));
 
     // The token is only ever sent to the site it was entered for: another host (or no valid address any more) clears it,
     // unless the same patch brings a new token.
@@ -916,6 +955,29 @@ class Tracker extends EventEmitter {
     const changed = Object.keys(next).filter(k => JSON.stringify(next[k]) !== JSON.stringify(before[k]));
     if (changed.length) this.emit('settings', { before, next, changed });
     return urlRefused ? { ...next, urlRefused: true } : next;
+  }
+
+  /**
+   * Swaps in the tracked list of another site (host): `tracked` is always the list of `site`, the lists of the sites we left are in `sites`.
+   * Jira ids only mean something within one site, so a list is never asked about another site. A site that was never used starts empty;
+   * the list of an unconfigured state (no URL yet) goes to the first site entered, as storage from before this did.
+   */
+  switchSite(host) {
+    const old = this.data.site;
+    this.setMe(null); // the account is not known on the next site: mention flags are cleared now, so no list is kept with another account's flags
+    const live = this.data.tracked.filter(t => !t.loading); // a request still adding an issue notices through listGen
+    const saved = this.data.sites.find(s => s.host === host);
+    const sites = this.data.sites.filter(s => s !== saved && s.host !== old);
+    let next = saved ? saved.tracked : [];
+    if (old === '' && !saved) next = live;
+    else if (live.length) sites.push({ host: old, tracked: live });
+    this.data.sites = sites;
+    this.data.tracked = next;
+    this.data.site = host;
+    this.removed.clear(); // Undo of Stop tracking and of Processed belongs to the list it came from
+    this.marked.clear();
+    this.data.stale = { ...NO_STALE, site: host }; // fetched from the site we left; the next check fetches the new site's
+    this.listGen++;
   }
 
   /** After a change of URL, email or token: log in again and check soon. */

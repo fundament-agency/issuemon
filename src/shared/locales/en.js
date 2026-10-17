@@ -101,6 +101,7 @@
   'error.titleRequired': 'Give the issue a title.',
   'error.notesProjectRequired': 'Set a project for new issues in Settings first.',
   'error.newIssueUnavailable': 'The new issue cannot be fetched (yet).',
+  'error.siteChanged': 'The Jira site changed while this was running.',
   'error.notificationsUnsupported': 'Notifications are not supported on this system.',
   'error.startup': 'IssueMon cannot start',
 
