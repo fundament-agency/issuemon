@@ -123,6 +123,71 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await assertAddCleared();
   });
 
+  await t.test('detail shows metadata and relations; related keys select or offer Track', async t => {
+    t.after(async () => {
+      await app.evaluate(() => global.__issuemon.tracker.untrack('APP-52'));
+      await page.waitForSelector('[data-row="APP-52"]', { state: 'detached' });
+    });
+    await page.click('[data-row="WEB-1423"]');
+    assert.match(await page.textContent('.meta'), /Labels.*mobile.*checkout.*Fix version.*2026.10/s);
+    assert.match(await page.textContent('[data-relations="parent"]'), /WEB-1398.*Search filter does not remember/);
+    assert.match(await page.textContent('[data-relations="subtasks"]'), /1 of 2 done/);
+    assert.match(await page.textContent('[data-relations="subtasks"]'), /WEB-1100.*Done/s);
+    assert.match(await page.textContent('[data-relations="links"]'), /is blocked by.*OPS-310.*To Do/s);
+    await shot('detail-relations');
+    await app.evaluate(() => global.__issuemon.tracker.saveSettings({ language: 'nl' }));
+    await page.waitForFunction(() => document.querySelector('[data-relations="parent"] h3')?.textContent === 'Bovenliggend issue');
+    assert.match(await page.textContent('[data-relations="subtasks"]'), /1 van 2 afgerond/);
+    await app.evaluate(() => global.__issuemon.tracker.saveSettings({ language: 'en' }));
+    await page.waitForFunction(() => document.querySelector('[data-relations="parent"] h3')?.textContent === 'Parent');
+    // Parent and sub-task keys share the same tracked selection path.
+    await page.click('[data-relations="parent"] [data-key="WEB-1398"]');
+    await page.waitForSelector('.va-row.sel[data-row="WEB-1398"]');
+    assert.equal(await page.locator('.meta').getByText('Labels', { exact: true }).count(), 0);
+    assert.equal(await page.locator('.meta').getByText('Fix version', { exact: true }).count(), 0);
+    assert.equal(await page.locator('[data-relations]').count(), 0);
+    await page.click('[data-row="WEB-1423"]');
+    await page.click('[data-relations="subtasks"] [data-key="APP-88"]');
+    await page.waitForSelector('.va-row.sel[data-row="APP-88"]');
+    await page.click('[data-row="WEB-1423"]');
+    await page.click('[data-relations="links"] [data-key="OPS-310"]');
+    await page.waitForSelector('.va-row.sel[data-row="OPS-310"]');
+    await page.click('[data-row="WEB-1423"]');
+    await page.click('[data-relations="links"] [data-key="APP-52"]');
+    assert.match(await page.textContent('#snacks'), /Track APP-52\?/);
+    assert.equal(await page.locator('[data-row="APP-52"]').count(), 0);
+    await page.locator('#snacks').getByRole('button', { name: 'Track', exact: true }).click();
+    await page.waitForSelector('.va-row.sel[data-row="APP-52"]');
+    assert.match(await page.textContent('.va-d-title'), /Crash when opening a deep link/);
+    assert.ok(jira.requests.some(r => r.path.endsWith('/issue/bulkfetch') && ['parent', 'subtasks', 'issuelinks'].every(f => r.body.fields.includes(f))));
+  });
+
+  await t.test('detail escapes Jira metadata and handles partial relations', async t => {
+    const text = '<img src=x onerror="window.relationInjected=true">';
+    const issue = jira.addIssue({ key: 'TEST-33', summary: 'Partial relations', labels: [text], fixVersions: [text], parent: 'TEST-34', subtasks: ['TEST-34'],
+      issuelinks: [{ type: { outward: text }, outwardIssue: 'TEST-34' }] });
+    jira.addIssue({ key: 'TEST-34', summary: text, status: text });
+    t.after(async () => {
+      await app.evaluate(() => global.__issuemon.tracker.untrack('TEST-33'));
+      jira.issues.delete('TEST-33');
+      jira.issues.delete('TEST-34');
+      await page.waitForSelector('[data-row="TEST-33"]', { state: 'detached' });
+    });
+    // One relation has only a key, as Jira may return with restricted access.
+    issue.fields.subtasks = ['TEST-35'];
+    await page.fill('#add-input', 'TEST-33');
+    await page.press('#add-input', 'Enter');
+    await page.waitForSelector('.va-row.sel[data-row="TEST-33"]');
+    assert.match(await page.textContent('.meta'), /<img src=x/);
+    assert.match(await page.textContent('[data-relations="parent"]'), /<img src=x/);
+    assert.match(await page.textContent('[data-relations="links"]'), /<img src=x/);
+    assert.match(await page.textContent('[data-relations="subtasks"]'), /0 of 1 done.*TEST-35.*—/s);
+    assert.equal(await page.locator('.va-detail img').count(), 0);
+    assert.equal(await page.evaluate(() => window.relationInjected), undefined);
+    assert.equal(await page.locator('.va-detail').evaluate(el => el.scrollWidth <= el.clientWidth), true);
+    await shot('detail-partial-relations');
+  });
+
   await t.test('a newly tracked issue is selected and scrolled into view', async t => {
     const windowState = await app.evaluate(({ BrowserWindow }) => {
       const w = BrowserWindow.getAllWindows()[0];

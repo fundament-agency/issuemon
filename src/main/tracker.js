@@ -246,20 +246,24 @@ class Tracker extends EventEmitter {
       let fresh = [];
       let delay = this.settings.interval * MIN;
       let result;
+      const gen = this.credentialsGen; // old credentials must not consume or announce new account state
       try {
-        const gen = this.credentialsGen; // credentials changed during this check: the old site's answers fill in and use up nothing
         if (!this.data.me) {
           const me = await client.myself();
-          if (gen === this.credentialsGen) this.setMe(me);
+          if (gen !== this.credentialsGen) return { ok: true, found: 0 };
+          this.setMe(me);
         }
         fresh = await this.checkTracked(client, { quiet: this.data.reconnected, gen });
-        if (gen === this.credentialsGen) this.data.reconnected = false; // only the first check that got an answer after (re)connecting is quiet
+        if (gen !== this.credentialsGen) return { ok: true, found: 0 };
+        this.data.reconnected = false; // only the first check that got an answer after (re)connecting is quiet
         await this.refreshStale(client);
+        if (gen !== this.credentialsGen) return { ok: true, found: 0 };
         this.data.lastCheck = this.now();
         this.status = { state: 'ok', message: null };
         this.failures = 0;
         result = { ok: true, found: fresh.reduce((n, f) => n + f.changes.length, 0) };
       } catch (err) {
+        if (gen !== this.credentialsGen) return { ok: true, found: 0 };
         this.status = { state: 'error', message: err.message, code: err.code || null };
         if (isTransient(err)) delay = Math.min(delay, BACKOFF[Math.min(this.failures++, BACKOFF.length - 1)]);
         else this.failures = 0;
@@ -267,8 +271,10 @@ class Tracker extends EventEmitter {
         result = { ok: false, found: 0, error: err.message };
       } finally {
         this.running = null;
-        this.store.save();
-        this.schedule(delay);
+        if (gen === this.credentialsGen) {
+          this.store.save();
+          this.schedule(delay);
+        }
         if (this.rewordAfterRun) {
           this.rewordAfterRun = false;
           this.recheckSoon();
@@ -285,22 +291,24 @@ class Tracker extends EventEmitter {
     const entries = this.data.tracked.filter(t => !t.loading);
     if (!entries.length) return [];
     const { issues, errors } = await client.bulkFetch(entries.map(t => t.id || t.key));
+    if (gen !== this.credentialsGen) return [];
     const byId = new Map(issues.map(i => [i.id, i]));
     const byKey = new Map(issues.map(i => [i.key, i]));
     const failed = new Set(errors.map(e => String(e?.id))); // issueErrors: Jira could not return these right now (a retriable error)
     const fresh = [];
     const now = this.now();
-    const gone = []; // missing from the answer for the first time: recorded after the loop, so a failure in it loses nothing
+    const gone = []; // first-time missing issues: recorded only after identity verification
 
     await mapLimit(entries, PARALLEL, async t => {
+      if (gen !== this.credentialsGen) return;
       const next = (t.id && byId.get(t.id)) || byKey.get(t.key);
       if (!next) {
         // Jira's rule (BulkIssueResults.issueErrors): an issue that doesn't exist or that you may not see is simply left out of the answer,
         // while issueErrors only names issues it could not return for a retriable reason. So an issue in neither list is deleted or out of reach
         // (moves are followed by id, and Jira words both the same), and one in issueErrors says nothing: its state stays as it was.
         if (failed.has(String(t.id || t.key))) return;
-        t.error = this.t('error.trackedMissing');
-        if (!t.missingSince) gone.push(t);
+        if (t.missingSince) t.error = this.t('error.trackedMissing');
+        else gone.push(t);
         return;
       }
       if (t.missingSince) { // back again: the error goes silently, and an open "no longer accessible" no longer holds
@@ -332,6 +340,7 @@ class Tracker extends EventEmitter {
         found = changesFromSnapshots(prev, next);
       }
 
+      if (gen !== this.credentialsGen) return;
       const known = new Set(t.changes.map(c => c.id));
       const meId = this.data.me?.accountId;
       const added = [];
@@ -349,14 +358,20 @@ class Tracker extends EventEmitter {
       this.prune(t);
       const news = added.filter(c => !c.processed);
       if (news.length) fresh.push({ key: t.key, summary: next.summary, changes: news });
+    }).catch(err => {
+      // Keep the red row across a failed check/restart, without recording a missing change yet.
+      if (gen === this.credentialsGen) for (const t of gone) t.error = this.t('error.trackedMissing');
+      throw err;
     });
 
     if (gone.length && gen === this.credentialsGen) { // after a change of credentials during this check, what the old site misses says nothing
       // Bad credentials can look like an answer too (Jira Cloud treats them as anonymous: 200, every issue left out): only report
       // when /myself still names the account we know. A failing /myself fails the check, so a dead token shows as an auth error.
       const me = await client.myself();
+      if (gen !== this.credentialsGen) return [];
       const same = !this.data.me?.accountId || me.accountId === this.data.me.accountId;
       this.setMe(me);
+      for (const t of gone) t.error = this.t('error.trackedMissing');
       if (same) {
         for (const t of gone) {
           t.missingSince = now;
@@ -368,7 +383,7 @@ class Tracker extends EventEmitter {
         }
       }
     }
-    return fresh;
+    return gen === this.credentialsGen ? fresh : [];
   }
 
   /** Comment id → the latest text and mention ranges IssueMon recorded for it (as a new comment or an edit): the old text of the next edit. */
@@ -508,6 +523,7 @@ class Tracker extends EventEmitter {
   restore(key) {
     const r = this.removed.get(key);
     if (!r || this.find(key)) return false;
+    for (const change of r.entry.changes) updateMentionFlag(change, this.data.me?.accountId);
     this.data.tracked.splice(Math.min(r.index, this.data.tracked.length), 0, r.entry);
     this.removed.delete(key);
     this.store.save();
@@ -785,6 +801,7 @@ class Tracker extends EventEmitter {
     this.setMe(null);
     this.data.reconnected = true; // the new site may not know the issues tracked on the old one: the next check that gets an answer reports none missing
     this.credentialsGen++;
+    this.staleGen++; // invalidate any in-flight stale list from the previous account
     this.people = NO_PEOPLE;
     this.activityCache.clear();
     this.typeCache.clear();
@@ -801,15 +818,17 @@ class Tracker extends EventEmitter {
   async testConnection() {
     const client = this.getClient();
     if (!client) return { ok: false, message: this.t('error.accountIncomplete') };
+    const gen = this.credentialsGen;
     try {
       const me = await client.myself();
+      if (gen !== this.credentialsGen) return { ok: false, message: null };
       this.setMe(me);
       this.store.save();
       if (!this.running) this.schedule(500);
       this.loadPeople();
       return { ok: true, message: this.t('status.connectedAs', { name: me.name || this.t('person.unknown') }) };
     } catch (err) {
-      return { ok: false, message: err.message };
+      return { ok: false, message: gen === this.credentialsGen ? err.message : null };
     }
   }
 
@@ -819,16 +838,21 @@ class Tracker extends EventEmitter {
     if (p.loading || (!force && !p.error && p.fetchedAt && this.now() - p.fetchedAt < HOUR)) return p;
     const client = this.getClient();
     if (!client) return p;
+    const gen = this.credentialsGen;
     const loading = this.people = { ...p, loading: true, error: null };
     this.changed();
     try {
       if (!this.data.me) { // needed to point out yourself in the list
-        this.setMe(await client.myself());
+        const me = await client.myself();
+        if (gen !== this.credentialsGen) return this.people;
+        this.setMe(me);
         this.store.save();
       }
       const list = await client.users();
+      if (gen !== this.credentialsGen) return this.people;
       if (this.people === loading) this.people = { list, fetchedAt: this.now(), loading: false, error: null };
     } catch (err) {
+      if (gen !== this.credentialsGen) return this.people;
       if (this.people === loading) this.people = { ...loading, loading: false, error: err.message };
     }
     this.changed();

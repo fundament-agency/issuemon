@@ -51,12 +51,12 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
   let seq = 10_000;
   let server = null;
 
-  function addIssue({ key, summary, status = 'To Do', type = 'Task', priority = 'Medium', assignee = null, updated = now(), labels = [], project, description = '' }) {
+  function addIssue({ key, summary, status = 'To Do', type = 'Task', priority = 'Medium', assignee = null, updated = now(), labels = [], fixVersions = [], parent = null, subtasks = [], issuelinks = [], project, description = '' }) {
     const issue = {
       id: String(++seq),
       key,
       fields: {
-        summary, status, type, priority, assignee, updated, labels, description, fixVersions: [],
+        summary, status, type, priority, assignee, updated, labels, description, fixVersions, parent, subtasks, issuelinks,
         project: project || key.split('-')[0],
       },
       changelog: [],
@@ -135,6 +135,16 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     return change(i.key, { field: 'priority', from: i.fields.priority, to: prios[Math.floor(Math.random() * prios.length)], author });
   }
 
+  // Shallow Jira relation payloads, without recursively expanding relations.
+  function related(key) {
+    const i = issues.get(key);
+    if (!i) return { key };
+    return { id: i.id, key, fields: {
+      summary: i.fields.summary,
+      status: { name: i.fields.status, statusCategory: { key: CATEGORY[i.fields.status] || 'indeterminate' } },
+    } };
+  }
+
   function toApi(i) {
     const f = i.fields;
     return {
@@ -148,6 +158,12 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
         assignee: f.assignee,
         updated: jiraDate(f.updated),
         labels: f.labels,
+        parent: f.parent ? related(f.parent) : null,
+        subtasks: f.subtasks.map(related),
+        issuelinks: f.issuelinks.map(link => ({ ...link,
+          ...(link.inwardIssue && { inwardIssue: related(link.inwardIssue) }),
+          ...(link.outwardIssue && { outwardIssue: related(link.outwardIssue) }),
+        })),
         description: f.description ? adf(f.description) : null,
         fixVersions: f.fixVersions.map(name => ({ name })),
         project: { key: i.key.split('-')[0], name: f.project },
@@ -326,6 +342,11 @@ function seedDemo(jira) {
   const t = Date.now();
   const { me, alex, sam, jordan, priya } = jira.people;
   jira.addIssue({ key: 'WEB-1423', type: 'Bug', summary: 'Checkout: card payment option disappears on mobile', status: 'In Progress', priority: 'High', assignee: sam, updated: t - 3 * DAY,
+    labels: ['mobile', 'checkout'], fixVersions: ['2026.10'], parent: 'WEB-1398', subtasks: ['WEB-1100', 'APP-88'],
+    issuelinks: [
+      { type: { name: 'Blocks', inward: 'is blocked by', outward: 'blocks' }, inwardIssue: 'OPS-310' },
+      { type: { name: 'Relates', inward: 'relates to', outward: 'relates to' }, outwardIssue: 'APP-52' },
+    ],
     description: 'On mobile (iOS and Android) the card payment option is missing from the list of payment methods.\n\nOnly for orders under 5 USD; everything is normal on desktop.' });
   jira.addIssue({ key: 'APP-88', type: 'Bug', summary: 'Push notifications arrive twice after signing in again', status: 'In Progress', priority: 'Medium', assignee: jordan, updated: t - 2 * DAY,
     description: 'After signing out and back in, the app registers the device twice, so every push arrives twice.' });

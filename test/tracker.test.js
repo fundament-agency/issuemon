@@ -1543,3 +1543,114 @@ test('loading stored mention flags derives them from the saved identity and hand
     assert.deepEqual(data.tracked[0].changes.map(c => !!c.mentionsMe), [accountId === 'a', accountId === 'b', false]);
   }
 });
+
+test('undo of untrack reclassifies comments for the current account without changing processing', async t => {
+  for (const identity of [null, { accountId: 'b' }]) await t.test(identity ? 'B' : 'unknown', async t => {
+    const { tracker, store, notes } = await trackedSetup(t, 'WEB-1');
+    const entry = tracker.find('WEB-1');
+    entry.changes = [
+      { field: 'comment', mentions: [{ accountId: 'a' }], own: true, processed: true, processedAt: 123 },
+      { field: 'comment', mentions: [{ accountId: 'b' }], processed: false, processedAt: null },
+      { field: 'comment', to: '@A', mentionsMe: true, processed: false },
+    ];
+    tracker.setMe({ accountId: 'a' });
+    const processing = entry.changes.map(c => [c.own, c.processed, c.processedAt]);
+    tracker.untrack('WEB-1');
+    tracker.credentialsChanged();
+    tracker.setMe(identity);
+    let persisted;
+    store.save = () => { persisted = JSON.parse(JSON.stringify(store.data)); };
+    assert.equal(tracker.restore('WEB-1'), true);
+    assert.deepEqual(persisted.tracked[0].changes.map(c => !!c.mentionsMe), [false, !!identity, false]);
+    assert.deepEqual(entry.changes.map(c => [c.own, c.processed, c.processedAt]), processing);
+    assert.equal(notes.length, 0);
+  });
+});
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+test('superseded identity lookups leave A → unknown → B and the newest people request intact', async t => {
+  for (const path of ['testConnection', 'loadPeople', 'check']) {
+    for (const fails of [false, true]) await t.test(`${path}: stale ${fails ? 'failure' : 'success'}`, async t => {
+      const { tracker, store, notes, timers } = await trackedSetup(t, 'WEB-1');
+      const entry = tracker.find('WEB-1');
+      const a = { accountId: 'a', name: 'A' }, b = { accountId: 'b', name: 'B' };
+      entry.changes = [
+        { id: 'ca', field: 'comment', mentions: [{ accountId: 'a' }], processed: false },
+        { id: 'cb', field: 'comment', mentions: [{ accountId: 'b' }], own: true, processed: true, processedAt: 123 },
+      ];
+      tracker.setMe(a);
+      const processing = entry.changes.map(c => [c.own, c.processed, c.processedAt]);
+      if (path === 'loadPeople') tracker.credentialsChanged(); // force its /myself lookup
+      const old = deferred(), started = deferred(), newestUsers = deferred();
+      let oldUsers = 0, oldSearches = 0;
+      tracker.getClient = () => ({
+        myself: () => { started.resolve(); return old.promise; },
+        bulkFetch: async () => ({ issues: [], errors: [] }),
+        users: async () => { oldUsers++; return []; },
+        search: async () => { oldSearches++; return { issues: [] }; },
+      });
+      const stale = tracker[path]();
+      await started.promise;
+      tracker.credentialsChanged();
+      assert.equal(tracker.data.me, null);
+      assert.deepEqual(entry.changes.map(c => !!c.mentionsMe), [false, false]);
+      tracker.getClient = () => ({ myself: async () => b, users: () => newestUsers.promise });
+      await tracker.testConnection(); // installs B and starts a new pending people request
+      const newest = tracker.people;
+      assert.equal(newest.loading, true);
+      assert.equal(tracker.data.me.accountId, 'b');
+      const before = { saves: store.saves, timers: timers.length, status: tracker.status, lastCheck: tracker.data.lastCheck };
+      if (fails) old.reject(Object.assign(new Error('Old credentials failed'), { code: 'auth' }));
+      else old.resolve(a);
+      await stale;
+      assert.equal(tracker.data.me.accountId, 'b');
+      assert.deepEqual(entry.changes.map(c => !!c.mentionsMe), [false, true]);
+      assert.deepEqual(entry.changes.map(c => [c.own, c.processed, c.processedAt]), processing);
+      assert.equal(tracker.people, newest); // an old request cannot clear the new loading state
+      assert.equal(tracker.people.loading, true);
+      assert.equal(store.saves, before.saves);
+      assert.equal(timers.length, before.timers);
+      assert.equal(tracker.status, before.status);
+      assert.equal(tracker.data.lastCheck, before.lastCheck);
+      assert.equal(tracker.data.reconnected, true);
+      assert.equal(entry.missingSince, undefined);
+      assert.equal(entry.error ?? null, null);
+      assert.equal(notes.length, 0);
+      assert.equal(oldUsers, 0);
+      assert.equal(oldSearches, 0);
+      newestUsers.resolve([b]);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(tracker.people.list, [b]);
+      assert.equal(tracker.people.loading, false);
+    });
+  }
+});
+
+test('superseded people-list responses cannot replace the newest account list or clear loading', async t => {
+  for (const fails of [false, true]) await t.test(fails ? 'failure' : 'success', async t => {
+    const { tracker } = await setup(t);
+    const old = deferred(), newest = deferred();
+    tracker.setMe({ accountId: 'a' });
+    tracker.getClient = () => ({ users: () => old.promise });
+    const stale = tracker.loadPeople();
+    tracker.credentialsChanged();
+    tracker.setMe({ accountId: 'b' });
+    tracker.getClient = () => ({ users: () => newest.promise });
+    const current = tracker.loadPeople();
+    const pending = tracker.people;
+    if (fails) old.reject(new Error('Old people failed'));
+    else old.resolve([{ accountId: 'a' }]);
+    await stale;
+    assert.equal(tracker.people, pending);
+    assert.equal(tracker.people.loading, true);
+    newest.resolve([{ accountId: 'b' }]);
+    await current;
+    assert.deepEqual(tracker.people.list, [{ accountId: 'b' }]);
+    assert.equal(tracker.people.error, null);
+  });
+});

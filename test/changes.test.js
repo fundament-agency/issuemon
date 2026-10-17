@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  parseJiraDate, normalizeIssue, changesFromChangelog, changesFromComments, changesFromSnapshots, adfToText, staleJql, excludedProject,
+  ISSUE_FIELDS, parseJiraDate, normalizeIssue, changesFromChangelog, changesFromComments, changesFromSnapshots, adfToText, staleJql, excludedProject,
 } = require('../src/main/changes');
 
 test('parseJiraDate understands Jira offsets without a colon', () => {
@@ -31,8 +31,34 @@ test('normalizeIssue makes a flat issue', () => {
   assert.deepEqual(i, {
     id: '10001', key: 'WEB-1', summary: 'Title', status: 'In Progress', statusCat: 'indeterminate', type: 'Bug', subtask: false,
     priority: 'High', assignee: { accountId: 'a1', name: 'Sam Rivera' }, updated: Date.UTC(2026, 9, 9, 10), labels: ['x'],
-    fixVersions: ['2026.10'], project: 'Website', projectKey: 'WEB', description: '',
+    fixVersions: ['2026.10'], parent: null, subtasks: [], links: [], project: 'Website', projectKey: 'WEB', description: '',
   });
+});
+
+test('normalizeIssue reads standard relations, directional links and partial data', () => {
+  for (const field of ['parent', 'subtasks', 'issuelinks']) assert.ok(ISSUE_FIELDS.includes(field));
+  const related = { id: '2', key: 'WEB-2', fields: { summary: 'Parent', status: { name: 'Closed', statusCategory: { key: 'done' } } } };
+  const expected = { key: 'WEB-2', summary: 'Parent', status: 'Closed', statusCat: 'done' };
+  const i = normalizeIssue({ fields: {
+    parent: related,
+    subtasks: [related, null, {}, { key: 'WEB-3' }],
+    issuelinks: [
+      { type: { inward: 'is blocked by', outward: 'blocks' }, inwardIssue: related },
+      { type: { inward: 'is blocked by', outward: 'blocks' }, outwardIssue: { key: 'WEB-3' } },
+      null, {}, { type: {}, inwardIssue: {} },
+    ],
+  } });
+  assert.deepEqual(i.parent, expected);
+  const partial = { key: 'WEB-3', summary: '', status: null, statusCat: 'new' };
+  assert.deepEqual(i.subtasks, [expected, partial]);
+  assert.deepEqual(i.links, [{ type: 'is blocked by', issue: expected }, { type: 'blocks', issue: partial }]);
+  const empty = normalizeIssue({ fields: { parent: {}, subtasks: null, issuelinks: null, fixVersions: [null, {}, { name: '1.0' }], labels: [null, 'mobile'] } });
+  assert.equal(empty.parent, null);
+  assert.deepEqual(empty.subtasks, []);
+  assert.deepEqual(empty.links, []);
+  assert.deepEqual(empty.fixVersions, ['1.0']);
+  assert.deepEqual(empty.labels, ['mobile']);
+  assert.deepEqual(normalizeIssue({}).links, []);
 });
 
 test('normalizeIssue converts an ADF description to text and truncates at 2000 characters', () => {
