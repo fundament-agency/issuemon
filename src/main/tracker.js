@@ -414,7 +414,7 @@ class Tracker extends EventEmitter {
           return;
         } catch (err) {
           // "The value 'Backlog' does not exist for the field 'status'." → drop that status and try again.
-          const unknown = err.status === 400 ? unknownStatuses(err.message, staleExcluded(this.settings).filter(s => !skip.some(k => k.toLowerCase() === s.toLowerCase()))) : [];
+          const unknown = err.status === 400 ? unknownStatuses(err.details, staleExcluded(this.settings).filter(s => !skip.some(k => k.toLowerCase() === s.toLowerCase()))) : [];
           if (!unknown.length || unknown.every(u => skip.includes(u))) throw err;
           skip.push(...unknown.filter(u => !skip.includes(u)));
         }

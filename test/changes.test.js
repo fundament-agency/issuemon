@@ -237,12 +237,26 @@ test('mock Jira reads JQL strings strictly: an unterminated string is an error',
 
 test('unknownStatuses: reads the names from Jira\'s 400, also with quotes in them or in another language', () => {
   const en = s => `The value '${s}' does not exist for the field 'status'.`;
-  assert.deepEqual(unknownStatuses(en('Live'), ['Live', 'Closed']), ['Live']);
-  assert.deepEqual(unknownStatuses(en("Won't Fix"), ["Won't Fix"]), ["Won't Fix"]);
-  assert.deepEqual(unknownStatuses(`${en('Live')} ${en("It's 'on'")}`, []), ['Live', "It's 'on'"]);
-  assert.deepEqual(unknownStatuses("La valeur « Won't Fix » n'existe pas pour le champ 'status'.", ['Closed', "Won't Fix", 'Fix']), ["Won't Fix"]);
-  assert.deepEqual(unknownStatuses('Der Wert "live" existiert nicht.', ['Live', 'Closed']), ['Live']);
-  assert.deepEqual(unknownStatuses('Something else is wrong.', ['Live']), []);
+  assert.deepEqual(unknownStatuses([en('Live')], ['Live', 'Closed']), ['Live']);
+  assert.deepEqual(unknownStatuses([en("Won't Fix")], ["Won't Fix"]), ["Won't Fix"]);
+  assert.deepEqual(unknownStatuses([en('Live'), en("It's 'on'")], []), ['Live', "It's 'on'"]);
+  assert.deepEqual(unknownStatuses([], ['Live']), []);
+  assert.deepEqual(unknownStatuses(undefined, ['Live']), []);
+  // each message on its own: the lazy match does not run from one message into the next
+  assert.deepEqual(unknownStatuses(["The value 'acc-1' does not exist for the field 'assignee'.", en('Live')], ['Live']), ['Live']);
+});
+
+test('unknownStatuses: in another language the sent name must stand between quotes in Jira\'s message', () => {
+  const sent = ['Closed', "Won't Fix", 'Fix', 'Live'];
+  assert.deepEqual(unknownStatuses(["La valeur « Won't Fix » n'existe pas pour le champ 'status'."], sent), ["Won't Fix"]);
+  assert.deepEqual(unknownStatuses(['Der Wert „Live“ existiert nicht für das Feld „status“.'], sent), ['Live']);
+  assert.deepEqual(unknownStatuses(['El valor “live” no existe.'], sent), ['Live']); // case-insensitive
+  assert.deepEqual(unknownStatuses(['De waarde ‘Live’ bestaat niet.'], sent), ['Live']);
+  assert.deepEqual(unknownStatuses(['De waarde "Closed" en \'Live\' bestaan niet.'], sent), ['Closed', 'Live']);
+  assert.deepEqual(unknownStatuses(["De waarde 'Won't Fix' bestaat niet."], sent), ["Won't Fix"]); // "Fix" alone is not quoted
+  // without quotes a name proves nothing, also not as a whole word or inside one
+  assert.deepEqual(unknownStatuses(['Der Wert Live existiert nicht. Please fix the Closed query.'], sent), []);
+  assert.deepEqual(unknownStatuses(['Something else is wrong.'], sent), []);
 });
 
 test('staleJql: issues of several people, by account id', () => {

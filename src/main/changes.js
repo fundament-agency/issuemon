@@ -261,17 +261,20 @@ function staleJql({ staleDays, excluded, people = [], skip = [], staleSort, stal
   return `${who}${notDone}${notIn} AND updated <= -${days}d ORDER BY updated ${staleSort === 'newest' ? 'DESC' : 'ASC'}`;
 }
 
-/** The statuses Jira's 400 says do not exist, out of the `sent` excluded statuses. Jira words it as "The value 'Won't Fix' does not
-    exist for the field 'status'." (the name may hold quotes, so the match runs up to the closing words). In another language or
-    with other wording that fails; then the sent names that occur verbatim in the message count, except a name that is only part of
-    another sent name in it ("Fix" in "Won't Fix"): that one turns up in the answer to the next request if it is unknown too. */
-function unknownStatuses(message, sent) {
-  const text = String(message);
-  const named = [...text.matchAll(/value '(.+?)' does not exist for the field 'status'/gi)].map(m => m[1]);
-  if (named.length) return named;
-  const lower = text.toLowerCase();
-  const found = sent.filter(s => lower.includes(s.toLowerCase()));
-  return found.filter(s => !found.some(o => o.length > s.length && o.toLowerCase().includes(s.toLowerCase())));
+/** Quote characters around a name in a message: '…', "…", «…», „…“, “…”, ‘…’ and the like. */
+const QUOTE_PAIRS = [["'", "'"], ['"', '"'], ['«', '»'], ['»', '«'], ['„', '“'], ['„', '”'], ['“', '”'], ['‘', '’']];
+const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The statuses Jira's 400 says do not exist, out of the `sent` excluded statuses. `details` are Jira's own messages (JiraError.details),
+    not IssueMon's wording around them. Jira words it as "The value 'Won't Fix' does not exist for the field 'status'." (the name may
+    hold quotes, so the match runs up to the closing words, per message). In another language that fails; then the sent names that
+    occur between quote characters in a message count. Without quotes a name proves nothing: "Fix" is also part of a word. */
+function unknownStatuses(details, sent) {
+  const messages = array(details).map(String);
+  const listed = messages.flatMap(m => [...m.matchAll(/value '(.+?)' does not exist for the field 'status'/gi)].map(x => x[1]));
+  if (listed.length) return listed;
+  return sent.filter(name => messages.some(m => QUOTE_PAIRS.some(([open, close]) =>
+    new RegExp(`${escapeRegExp(open)}\\s*${escapeRegExp(name)}\\s*${escapeRegExp(close)}`, 'i').test(m))));
 }
 
 module.exports = {

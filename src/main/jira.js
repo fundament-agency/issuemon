@@ -8,9 +8,10 @@ const { createTranslator } = require('../shared/i18n');
 const PAGE = 100;
 
 class JiraError extends Error {
-  constructor(message, { status = null, code = null, retryAfter = null, cause } = {}) {
+  constructor(message, { status = null, code = null, retryAfter = null, details = [], cause } = {}) {
     super(message, { cause });
     this.name = 'JiraError';
+    this.details = details; // Jira's own messages (errorMessages and errors), apart from IssueMon's wording around them
     this.status = status;
     this.code = code;
     this.retryAfter = retryAfter;
@@ -36,24 +37,26 @@ function normalizeBaseUrl(input) {
   }
 }
 
-/** Error message from a Jira response: JSON (errorMessages/errors) or plain text, such as "XSRF check failed". */
-async function errorDetail(res) {
+/** Messages from a Jira response: JSON (errorMessages/errors) or plain text, such as "XSRF check failed". */
+async function errorDetails(res) {
   const text = await res.text().catch(() => '');
   try {
     const body = JSON.parse(text);
-    return [...(body.errorMessages || []), ...Object.values(body.errors || {})].join(' ');
+    return [...(body.errorMessages || []), ...Object.values(body.errors || {})].filter(m => typeof m === 'string' && m);
   } catch {
-    return /<html/i.test(text) ? '' : text.replace(/\s+/g, ' ').trim().slice(0, 200);
+    const plain = /<html/i.test(text) ? '' : text.replace(/\s+/g, ' ').trim().slice(0, 200);
+    return plain ? [plain] : [];
   }
 }
 
 async function toError(res, method, url, t) {
-  const detail = await errorDetail(res);
+  const details = await errorDetails(res);
+  const detail = details.join(' ');
   const params = { call: `${method} ${url.pathname}`, status: res.status, detail };
   // With Jira's own explanation the message ends in it; without one, in a full stop.
   const message = key => t(detail ? `${key}Detail` : key, params);
   const retry = Number(res.headers.get('retry-after'));
-  const opts = { status: res.status, retryAfter: Number.isFinite(retry) && retry > 0 ? retry : null };
+  const opts = { status: res.status, retryAfter: Number.isFinite(retry) && retry > 0 ? retry : null, details };
   switch (res.status) {
     case 401: return new JiraError(t('error.jira.auth'), { ...opts, code: 'auth' });
     case 403: return new JiraError(message('error.jira.forbidden'), { ...opts, code: 'forbidden' });

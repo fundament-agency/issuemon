@@ -812,6 +812,35 @@ test('stale: an unknown status is found in a 400 in another language, by the nam
   assert.match(sent, /status NOT IN \("Fix", "Backlog"\)/); // Fix is a status too, and "Fix" in "Won't Fix" does not make it unknown
 });
 
+test('stale: in another language only a quoted name in Jira\'s own message is unknown, an unquoted one is not', async t => {
+  const { jira, tracker } = await setup(t, { excluded: ['Closed', 'Live', 'Fix'] });
+  jira.unknownStatusText = s => `Der Wert ${s} existiert nicht für das Feld status.`;
+  jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  tracker.saveSettings({ excluded: 'Closed, Parked' });
+  await tracker.check();
+  assert.match(tracker.data.stale.error, /Parked/); // no quotes: nothing to go on, so the error stays
+  assert.equal(tracker.data.stale.warning, null);
+  assert.match(jira.requests.findLast(r => r.path === '/rest/api/3/search/jql').body.jql, /"Closed", "Parked"/);
+});
+
+test('stale: the words around Jira\'s message never make an excluded status unknown, in any language', async t => {
+  for (const language of ['en', 'nl', 'fr', 'de', 'es']) {
+    const catalog = require(`../src/shared/locales/${language}`);
+    // every word of IssueMon's own "Jira rejected the request (400, POST …): …" in this language, as a status name
+    const words = [...new Set(catalog['error.jira.rejectedDetail'].replace(/\{\w+\}/g, ' ').split(/[^\p{L}]+/u).filter(w => w.length > 2))];
+    const { jira, tracker } = await setup(t, { excluded: ['Backlog'], language });
+    jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+    jira.searchStatus = 400;
+    tracker.saveSettings({ excluded: words.join(', ') });
+    await tracker.check();
+    const searches = jira.requests.filter(r => r.path === '/rest/api/3/search/jql');
+    const jql = searches.findLast(() => true).body.jql;
+    for (const w of words) assert.ok(jql.includes(`"${w}"`), `${language}: "${w}" is still excluded`);
+    assert.equal(tracker.data.stale.warning, null, language);
+    assert.match(tracker.data.stale.error, /Mock: search fails/, language);
+  }
+});
+
 test('stale: a failing request clears the warning of an earlier answer', async t => {
   const { jira, tracker } = await setup(t, { excluded: ['Closed', 'Live'] });
   jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });

@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
-- Excluded statuses (Settings → Stale issues) with an apostrophe or a backslash no longer break the Stale list. An unknown status such as *Won't Fix* is skipped with the usual warning, also when Jira words its 400 message in another language, and every status reaches Jira exactly as typed (a backslash used to leave the query unterminated). A failed Stale request no longer leaves a warning from an earlier answer next to the new error (#44).
+- Excluded statuses (Settings → Stale issues) with an apostrophe or a backslash no longer break the Stale list. An unknown status such as *Won't Fix* is skipped with the usual warning, also when Jira words its 400 message in another language (the name must then appear in quotes in Jira's message), and every status reaches Jira exactly as typed (a backslash used to leave the query unterminated). A failed Stale request no longer leaves a warning from an earlier answer next to the new error (#44).
 
 ## [0.3.0] - 2026-10-17
 
