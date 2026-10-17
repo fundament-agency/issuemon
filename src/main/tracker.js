@@ -78,6 +78,7 @@ function ensureShape(data) {
   d.tracked = Array.isArray(d.tracked) ? d.tracked.filter(t => t && t.key && !t.loading) : [];
   for (const t of d.tracked) {
     t.changes = Array.isArray(t.changes) ? t.changes : [];
+    for (const c of t.changes) updateMentionFlag(c, d.me?.accountId);
     // Version 3 → 4: up to 0.1.2 an issue that was missing had an error and nothing else (checkTracked is the only place that sets one): it is not announced after the update.
     if (from < 4 && t.error && !t.missingSince) t.missingSince = d.lastCheck || Date.now();
   }
@@ -88,6 +89,12 @@ function ensureShape(data) {
   d.lastCheck = d.lastCheck || null;
   d.updates = { lastCheck: null, latest: null, url: null, dismissed: null, ...(d.updates && typeof d.updates === 'object' ? d.updates : {}) };
   return d;
+}
+
+/** Mention flags follow the connected account; legacy records without mention ids cannot address it. */
+function updateMentionFlag(change, accountId) {
+  if (change.field === 'comment' && accountId && change.mentions?.some(m => m.accountId === accountId)) change.mentionsMe = true;
+  else delete change.mentionsMe;
 }
 
 async function mapLimit(items, limit, fn) {
@@ -167,6 +174,14 @@ class Tracker extends EventEmitter {
   get data() { return this.store.data; }
   get settings() { return this.data.settings; }
 
+  /** Update identity and stored flags together, without changing own-change processing decisions. */
+  setMe(me) {
+    this.data.me = me;
+    for (const entry of this.data.tracked) {
+      for (const change of entry.changes) updateMentionFlag(change, me?.accountId);
+    }
+  }
+
   configured() {
     return isConfigured(this.settings, this.hasToken());
   }
@@ -235,7 +250,7 @@ class Tracker extends EventEmitter {
         const gen = this.credentialsGen; // credentials changed during this check: the old site's answers fill in and use up nothing
         if (!this.data.me) {
           const me = await client.myself();
-          if (gen === this.credentialsGen) this.data.me = me;
+          if (gen === this.credentialsGen) this.setMe(me);
         }
         fresh = await this.checkTracked(client, { quiet: this.data.reconnected, gen });
         if (gen === this.credentialsGen) this.data.reconnected = false; // only the first check that got an answer after (re)connecting is quiet
@@ -323,8 +338,8 @@ class Tracker extends EventEmitter {
       for (const c of found.sort((a, b) => a.at - b.at)) {
         if (known.has(c.id)) continue;
         const own = !!(this.settings.ignoreOwn && meId && c.author?.accountId === meId);
-        const mentionsMe = c.field === 'comment' && !!meId && !!c.mentions?.some(m => m.accountId === meId);
-        const rec = { ...c, ...(mentionsMe && { mentionsMe: true }), processed: own, processedAt: own ? now : null, ...(own && { own: true }) };
+        const rec = { ...c, processed: own, processedAt: own ? now : null, ...(own && { own: true }) };
+        updateMentionFlag(rec, meId);
         t.changes.push(rec);
         added.push(rec);
       }
@@ -341,7 +356,7 @@ class Tracker extends EventEmitter {
       // when /myself still names the account we know. A failing /myself fails the check, so a dead token shows as an auth error.
       const me = await client.myself();
       const same = !this.data.me?.accountId || me.accountId === this.data.me.accountId;
-      this.data.me = me;
+      this.setMe(me);
       if (same) {
         for (const t of gone) {
           t.missingSince = now;
@@ -767,12 +782,13 @@ class Tracker extends EventEmitter {
 
   /** After a change of URL, email or token: log in again and check soon. */
   credentialsChanged() {
-    this.data.me = null;
+    this.setMe(null);
     this.data.reconnected = true; // the new site may not know the issues tracked on the old one: the next check that gets an answer reports none missing
     this.credentialsGen++;
     this.people = NO_PEOPLE;
     this.activityCache.clear();
     this.typeCache.clear();
+    this.store.save();
     if (this.configured()) {
       this.status = { state: 'idle', message: null };
       this.schedule(1_000);
@@ -787,7 +803,7 @@ class Tracker extends EventEmitter {
     if (!client) return { ok: false, message: this.t('error.accountIncomplete') };
     try {
       const me = await client.myself();
-      this.data.me = me;
+      this.setMe(me);
       this.store.save();
       if (!this.running) this.schedule(500);
       this.loadPeople();
@@ -807,7 +823,7 @@ class Tracker extends EventEmitter {
     this.changed();
     try {
       if (!this.data.me) { // needed to point out yourself in the list
-        this.data.me = await client.myself();
+        this.setMe(await client.myself());
         this.store.save();
       }
       const list = await client.users();

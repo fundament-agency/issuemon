@@ -1481,3 +1481,65 @@ test('comment mentions use account ids on new and edited records and retain own-
   delete entry.changes.at(-1).mentions;
   assert.equal(tracker.commentTexts(entry).get(entry.changes.at(-1).id.slice(1)).text, 'My own mention @Demo User');
 });
+
+test('stored comment flags follow A → unknown → B through every identity lookup', async t => {
+  for (const lookup of ['check', 'testConnection', 'loadPeople']) await t.test(lookup, async t => {
+    const { jira, tracker, store, notes } = await setup(t);
+    const a = { ...jira.people.me };
+    const b = { ...jira.people.alex };
+    const now = Date.now();
+    jira.addIssue({ key: 'WEB-1', summary: 'Account mentions', updated: now - DAY });
+    await tracker.addIssues('WEB-1');
+    await tracker.check();
+    jira.comment('WEB-1', 'For A', jira.people.sam, now, [a]);
+    jira.comment('WEB-1', 'For B', jira.people.sam, now + 1000, [b]);
+    jira.comment('WEB-1', 'Own change', a, now + 2000, [b]);
+    await tracker.check();
+    const entry = tracker.find('WEB-1');
+    entry.changes.push({ id: 'legacy', field: 'comment', to: '@Demo User', author: { name: 'Sam Rivera' }, processed: false });
+    const flags = data => data.tracked[0].changes.map(c => !!c.mentionsMe);
+    const processing = entry.changes.map(c => [c.own, c.processed, c.processedAt]);
+    let persisted;
+    store.save = function () { this.saves++; persisted = JSON.parse(JSON.stringify(this.data)); };
+    const assertFlags = expected => {
+      assert.deepEqual(flags(store.data), expected);
+      assert.deepEqual(flags(tracker.publicState()), expected);
+      assert.deepEqual(flags(persisted), expected);
+      assert.deepEqual(entry.changes.map(c => [c.own, c.processed, c.processedAt]), processing);
+    };
+    store.save();
+    assertFlags([true, false, false, false]);
+    notes.length = 0;
+    if (lookup === 'check') tracker.credentialsChanged(); // token changes reset identity directly
+    else tracker.saveSettings({ email: 'b@example.com' });
+    assert.equal(tracker.data.me, null);
+    assertFlags([false, false, false, false]);
+    jira.myselfStatus = 401;
+    assert.equal((await tracker.check()).ok, false);
+    assertFlags([false, false, false, false]);
+    jira.myselfStatus = null;
+    Object.assign(jira.people.me, b);
+    await tracker[lookup]();
+    assert.equal(tracker.data.me.accountId, b.accountId);
+    assertFlags([false, true, true, false]);
+    assert.equal(notes.length, 0); // switching accounts never re-announces existing changes
+    for (const [index, expected] of [[0, false], [1, true], [3, false]]) {
+      tracker.announce([{ key: entry.key, summary: entry.issue.summary, changes: [entry.changes[index]] }]);
+      assert.equal(notes.pop().body.includes('mentioned you'), expected);
+    }
+  });
+});
+
+test('loading stored mention flags derives them from the saved identity and handles legacy records', () => {
+  for (const accountId of ['a', 'b', null]) {
+    const data = ensureShape({
+      me: accountId ? { accountId } : null,
+      tracked: [{ key: 'WEB-1', changes: [
+        { field: 'comment', mentions: [{ accountId: 'a' }], mentionsMe: true },
+        { field: 'comment', mentions: [{ accountId: 'b' }] },
+        { field: 'comment', to: '@A', mentionsMe: true }, // legacy: no account ids
+      ] }],
+    });
+    assert.deepEqual(data.tracked[0].changes.map(c => !!c.mentionsMe), [accountId === 'a', accountId === 'b', false]);
+  }
+});
