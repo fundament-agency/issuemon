@@ -6,7 +6,7 @@ const { EventEmitter } = require('node:events');
 const { randomUUID } = require('node:crypto');
 const { parseKeys } = require('../shared/keys');
 const { pending, isChanged, changedList } = require('../shared/inbox');
-const { changesFromChangelog, changesFromComments, commentIdOf, changesFromSnapshots, staleJql, excludedProject } = require('./changes');
+const { changesFromChangelog, changesFromComments, commentIdOf, changesFromSnapshots, staleJql, staleExcluded, unknownStatuses, excludedProject } = require('./changes');
 const { describe, assignedToMe, changeKind, compareChanges, rankChanges } = require('../shared/change');
 const { INTERVALS, THEMES, noteText, projectKey, notesProjectOf, isConfigured } = require('../shared/rules');
 const { normalizeBaseUrl } = require('./jira');
@@ -414,14 +414,15 @@ class Tracker extends EventEmitter {
           return;
         } catch (err) {
           // "The value 'Backlog' does not exist for the field 'status'." → drop that status and try again.
-          const unknown = err.status === 400 ? [...err.message.matchAll(/value '([^']+)' does not exist for the field 'status'/gi)].map(m => m[1]) : [];
+          const unknown = err.status === 400 ? unknownStatuses(err.message, staleExcluded(this.settings).filter(s => !skip.some(k => k.toLowerCase() === s.toLowerCase()))) : [];
           if (!unknown.length || unknown.every(u => skip.includes(u))) throw err;
           skip.push(...unknown.filter(u => !skip.includes(u)));
         }
       }
     } catch (err) {
       if (err.code === 'auth' || err.code === 'network') throw err;
-      if (gen === this.staleGen) this.data.stale = { ...this.data.stale, error: err.message };
+      // The old list stays on screen, but a warning belongs to the answer it came with, not next to a new error.
+      if (gen === this.staleGen) this.data.stale = { ...this.data.stale, error: err.message, warning: null };
     }
   }
 

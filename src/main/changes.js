@@ -245,7 +245,8 @@ function excludedProject({ excludedProjects = [] }) {
   return issue => patterns.some(r => r.test(issue.project || '') || r.test(issue.projectKey || ''));
 }
 
-const quote = s => `"${String(s).replace(/"/g, '\\"')}"`;
+/** A JQL string: Jira reads \ and " inside quotes as escapes, so both are escaped and the value arrives exactly as typed. */
+const quote = s => `"${String(s).replace(/[\\"]/g, '\\$&')}"`;
 
 /** JQL for the stale list: issues of `people` (account ids), or your own without people; with staleUnassigned also
     issues without an assignee. Ordered by last updated: oldest on top by default, newest on top with staleSort 'newest'. */
@@ -260,6 +261,19 @@ function staleJql({ staleDays, excluded, people = [], skip = [], staleSort, stal
   return `${who}${notDone}${notIn} AND updated <= -${days}d ORDER BY updated ${staleSort === 'newest' ? 'DESC' : 'ASC'}`;
 }
 
+/** The statuses Jira's 400 says do not exist, out of the `sent` excluded statuses. Jira words it as "The value 'Won't Fix' does not
+    exist for the field 'status'." (the name may hold quotes, so the match runs up to the closing words). In another language or
+    with other wording that fails; then the sent names that occur verbatim in the message count, except a name that is only part of
+    another sent name in it ("Fix" in "Won't Fix"): that one turns up in the answer to the next request if it is unknown too. */
+function unknownStatuses(message, sent) {
+  const text = String(message);
+  const named = [...text.matchAll(/value '(.+?)' does not exist for the field 'status'/gi)].map(m => m[1]);
+  if (named.length) return named;
+  const lower = text.toLowerCase();
+  const found = sent.filter(s => lower.includes(s.toLowerCase()));
+  return found.filter(s => !found.some(o => o.length > s.length && o.toLowerCase().includes(s.toLowerCase())));
+}
+
 module.exports = {
   parseJiraDate,
   normalizeIssue,
@@ -269,6 +283,7 @@ module.exports = {
   changesFromSnapshots,
   adfToText,
   staleJql,
+  unknownStatuses,
   staleExcluded,
   excludedProject,
   ISSUE_FIELDS,
