@@ -48,13 +48,14 @@ test('without an account nothing can be added', async t => {
   assert.equal(r.error, 'Connect your Jira account in Settings first.');
 });
 
-test('an assignment to the connected user gets its own notification title', async t => {
+test('an assignment followed by a comment leads the notification title and body', async t => {
   const { jira, tracker, notes } = await setup(t);
   jira.addIssue({ key: 'WEB-1', summary: 'Checkout broken', updated: Date.now() - DAY });
   await tracker.addIssues('WEB-1');
   tracker.data.me = { accountId: jira.people.me.accountId, name: jira.people.me.displayName };
   jira.change('WEB-1', { field: 'assignee', from: 'Jordan Lee', to: 'Demo User', author: jira.people.alex });
-  assert.deepEqual(await tracker.check(), { ok: true, found: 1 });
+  jira.comment('WEB-1', 'Handing this over, I am on holiday from tomorrow.', jira.people.sam, Date.now() + 1000);
+  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
   assert.deepEqual(notes, [{ title: 'WEB-1 was assigned to you', subtitle: 'Checkout broken', body: 'Alex Morgan · Assigned to you', key: 'WEB-1' }]);
 });
 
@@ -1459,7 +1460,7 @@ test('comment mentions use account ids on new and edited records and retain own-
   const entry = tracker.find('WEB-1');
   assert.equal(entry.changes[0].mentionsMe, true);
   assert.equal(store.data.tracked[0].changes[0].mentions[0].accountId, me.accountId);
-  assert.deepEqual(notes.pop(), { title: 'WEB-1 changed', subtitle: 'Mentions', body: 'Sam Rivera mentioned you on WEB-1', key: 'WEB-1' });
+  assert.deepEqual(notes.pop(), { title: 'WEB-1 mentions you', subtitle: 'Mentions', body: 'Sam Rivera mentioned you on WEB-1', key: 'WEB-1' });
   assert.equal((await tracker.check()).found, 0);
 
   // Same display text, another account: the edit is real, but does not address me.
@@ -1480,6 +1481,40 @@ test('comment mentions use account ids on new and edited records and retain own-
   // A legacy record has no mention metadata and remains a safe text baseline.
   delete entry.changes.at(-1).mentions;
   assert.equal(tracker.commentTexts(entry).get(entry.changes.at(-1).id.slice(1)).text, 'My own mention @Demo User');
+});
+
+test('summary counts issues per kind, overlaps included, and ranks keys without mutating fresh changes', async t => {
+  const { tracker, notes } = await setup(t);
+  tracker.data.me = { name: 'Demo User' };
+  const assignment = { field: 'assignee', to: 'Demo User', at: 1 };
+  const mention = { field: 'comment', mentionsMe: true, at: 2 };
+  const fresh = [
+    { key: 'WEB-1', changes: [{ field: 'comment', at: 100 }] },
+    { key: 'WEB-2', changes: [mention, { ...mention, at: 3 }] },
+    { key: 'WEB-3', changes: [assignment, mention, assignment] },
+    { key: 'WEB-4', changes: [assignment] },
+    { key: 'WEB-5', changes: [{ field: 'priority', risk: true, at: 4 }] },
+  ];
+  const before = structuredClone(fresh);
+  tracker.announce(fresh);
+  assert.deepEqual(notes, [{ title: '5 issues changed · 2 assigned to you · 2 mention you · 1 with risk changes', body: 'WEB-3, WEB-4, WEB-2, WEB-5, WEB-1', key: null }]);
+  assert.deepEqual(fresh, before);
+});
+
+test('old pending assignments and suppressed own assignments never displace a fresh comment', async t => {
+  const { jira, tracker, notes } = await setup(t);
+  jira.addIssue({ key: 'WEB-1', summary: 'One', updated: Date.now() - DAY });
+  await tracker.addIssues('WEB-1');
+  await tracker.check();
+  const at = Date.now();
+  jira.change('WEB-1', { field: 'assignee', to: 'Demo User', at });
+  await tracker.check();
+  jira.change('WEB-1', { field: 'assignee', to: 'Demo User', author: jira.people.me, at: at + 1000 });
+  jira.comment('WEB-1', 'Fresh comment', jira.people.sam, at + 2000);
+  await tracker.check();
+  assert.equal(notes.length, 2);
+  assert.equal(notes[1].title, 'WEB-1 changed');
+  assert.equal(notes[1].body, 'Sam Rivera: “Fresh comment”');
 });
 
 test('stored comment flags follow A → unknown → B through every identity lookup', async t => {

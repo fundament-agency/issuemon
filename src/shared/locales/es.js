@@ -121,6 +121,10 @@
 
   // Notifications
   'notify.summary': { one: '{n} incidencia con cambios', other: '{n} incidencias con cambios' },
+  'notify.mentionsYou': '{key} te menciona',
+  'notify.summary.assignment': { one: '{n} asignada a ti', other: '{n} asignadas a ti' },
+  'notify.summary.mention': { one: '{n} te menciona', other: '{n} te mencionan' },
+  'notify.summary.risk': { one: '{n} con cambios de riesgo', other: '{n} con cambios de riesgo' },
   'notify.assignedToYou': 'Se te ha asignado {key}',
   'notify.changes': { one: '{key} ha cambiado', other: '{key} · {n} cambios' },
   'notify.test.title': 'Notificación de prueba de IssueMon',

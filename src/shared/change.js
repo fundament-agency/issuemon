@@ -33,6 +33,16 @@
       comparing by name is the best signal there is. */
   const assignedToMe = (c, meName) => c.field === 'assignee' && sameName(c.to, meName);
 
+  /** Shared notification importance. Risk is an explicit flag; detection belongs to the producer. */
+  const changeKind = (c, me) => assignedToMe(c, me) ? 'assignment' : c.mentionsMe ? 'mention' : c.risk ? 'risk' : 'other';
+  const IMPORTANCE = { assignment: 0, mention: 1, risk: 2, other: 3 };
+  const compareText = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+  /** Highest importance first, newest within a kind, then id for deterministic ties. */
+  const compareChanges = (a, b, me) => IMPORTANCE[changeKind(a, me)] - IMPORTANCE[changeKind(b, me)]
+    || (b.at || 0) - (a.at || 0) || compareText(String(a.id || ''), String(b.id || ''));
+  /** Returns a new array; neither the input order nor its changes are modified. Exact ties retain input order. */
+  const rankChanges = (changes, me) => [...changes].sort((a, b) => compareChanges(a, b, me));
+
   /** One line of plain text, for notifications. `me` is your display name. */
   function describe(c, { me, key = '', t = EN } = {}) {
     if (c.field === 'gone') return t('change.gone');
@@ -89,5 +99,5 @@
     }
   }
 
-  return { FIELD_LABELS, fieldLabel, fieldInSentence, clip, firstName, sameName, assignedToMe, describe, shortLine, chip };
+  return { FIELD_LABELS, fieldLabel, fieldInSentence, clip, firstName, sameName, assignedToMe, changeKind, compareChanges, rankChanges, describe, shortLine, chip };
 });

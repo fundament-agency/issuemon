@@ -7,7 +7,7 @@ const { randomUUID } = require('node:crypto');
 const { parseKeys } = require('../shared/keys');
 const { pending, isChanged, changedList } = require('../shared/inbox');
 const { changesFromChangelog, changesFromComments, commentIdOf, changesFromSnapshots, staleJql, excludedProject } = require('./changes');
-const { describe, assignedToMe } = require('../shared/change');
+const { describe, assignedToMe, changeKind, compareChanges, rankChanges } = require('../shared/change');
 const { INTERVALS, THEMES, noteText, projectKey, notesProjectOf, isConfigured } = require('../shared/rules');
 const { normalizeBaseUrl } = require('./jira');
 const { LANGUAGE_SETTINGS, resolveLanguage, createTranslator } = require('../shared/i18n');
@@ -435,17 +435,30 @@ class Tracker extends EventEmitter {
   /** Notifications: one per issue; with more than 3 issues at once, a single summary. */
   announce(fresh) {
     if (!this.settings.notify) return;
+    const me = this.data.me?.name;
+    // `fresh` contains only unprocessed changes added by this check, never older pending changes.
+    const ranked = fresh.map(f => ({ ...f, lead: rankChanges(f.changes, me)[0] }));
     if (fresh.length > 3) {
-      this.notify({ title: this.t('notify.summary', { n: fresh.length }), body: fresh.map(f => f.key).join(', '), key: null });
+      const parts = [this.t('notify.summary', { n: fresh.length })];
+      const counts = {
+        assignment: fresh.filter(f => f.changes.some(c => assignedToMe(c, me))).length,
+        mention: fresh.filter(f => f.changes.some(c => c.mentionsMe)).length,
+        risk: fresh.filter(f => f.changes.some(c => c.risk)).length,
+      };
+      for (const kind of ['assignment', 'mention', 'risk']) {
+        if (counts[kind]) parts.push(this.t(`notify.summary.${kind}`, { n: counts[kind] }));
+      }
+      ranked.sort((a, b) => compareChanges(a.lead, b.lead, me) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+      this.notify({ title: parts.join(' · '), body: ranked.map(f => f.key).join(', '), key: null });
       return;
     }
-    for (const f of fresh) {
-      const last = f.changes[f.changes.length - 1];
-      const me = this.data.me?.name;
+    for (const f of ranked) {
+      const kind = changeKind(f.lead, me);
+      const titleKey = kind === 'assignment' ? 'notify.assignedToYou' : kind === 'mention' ? 'notify.mentionsYou' : 'notify.changes';
       this.notify({
-        title: assignedToMe(last, me) ? this.t('notify.assignedToYou', { key: f.key }) : this.t('notify.changes', { key: f.key, n: f.changes.length }),
+        title: this.t(titleKey, { key: f.key, n: f.changes.length }),
         subtitle: f.summary,
-        body: describe(last, { me, key: f.key, t: this.t }),
+        body: describe(f.lead, { me, key: f.key, t: this.t }),
         key: f.key,
       });
     }

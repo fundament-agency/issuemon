@@ -953,6 +953,60 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await page.waitForSelector(row, { state: 'detached' });
   });
 
+  await t.test('notifications lead with assignments and summarize actionable issue counts', async t => {
+    const { me, sam } = jira.people;
+    const keys = ['RANK-1', 'RANK-2', 'RANK-3', 'RANK-4'];
+    t.after(async () => {
+      await app.evaluate((_, keys) => {
+        for (const key of keys) global.__issuemon.tracker.untrack(key);
+      }, keys);
+      for (const key of keys) jira.issues.delete(key);
+    });
+    const at = Date.now();
+    for (const key of keys) jira.addIssue({ key, summary: `Notification ranking ${key}`, updated: at - 60_000 });
+    await page.fill('#add-input', keys.join(' '));
+    await page.press('#add-input', 'Enter');
+    await until(async () => app.evaluate(() => global.__issuemon.tracker.data.tracked.filter(t => t.key.startsWith('RANK-') && t.issue).length === 4), 'ranking issues tracked');
+    const notifications = () => app.evaluate(() => global.__issuemonNotifications);
+    let before = (await notifications()).length;
+    jira.change('RANK-4', { field: 'assignee', to: me.displayName, author: sam, at });
+    jira.comment('RANK-4', 'Handing this over, I am on holiday from tomorrow.', sam, at + 1000);
+    await checkNow();
+    await until(async () => (await notifications()).length > before, 'ranked notification recorded');
+    assert.deepEqual((await notifications()).slice(before).map(n => [n.title, n.body, n.key]), [
+      ['RANK-4 was assigned to you', 'Sam Rivera · Assigned to you', 'RANK-4'],
+    ]);
+    await page.click('[data-view="changed"]');
+    await page.waitForSelector('.va-row[data-row="RANK-4"] .chip.me');
+    await page.click('.va-row[data-row="RANK-4"]');
+    await shot('22-assignment-before-comment');
+
+    // The old assignment remains pending, but only this check's changes belong in its summary.
+    before = (await notifications()).length;
+    jira.comment('RANK-1', 'Newest ordinary comment', sam, at + 6000);
+    jira.comment('RANK-2', 'Please review', sam, at + 5000, [me]);
+    jira.comment('RANK-2', 'One more question', sam, at + 5001, [me]);
+    jira.change('RANK-3', { field: 'assignee', to: me.displayName, author: sam, at: at + 3000 });
+    jira.comment('RANK-3', 'For you', sam, at + 4000, [me]);
+    jira.comment('RANK-4', 'Ordinary follow-up', sam, at + 2000);
+    await checkNow();
+    await until(async () => (await notifications()).length > before, 'ranked notification recorded');
+    assert.deepEqual((await notifications()).slice(before).map(n => [n.title, n.body, n.key]), [
+      ['4 issues changed · 1 assigned to you · 2 mention you', 'RANK-3, RANK-2, RANK-1, RANK-4', null],
+    ]);
+    // Notifications arrive before the renderer's separate state push. Wait for all rows.
+    await until(async () => (await page.locator('.va-row[data-row^="RANK-"]').count()) === 4, 'all ranking rows rendered');
+    // Changed retains time order, independently of notification importance.
+    const order = await page.locator('.va-row').evaluateAll(rows => rows.map(r => r.dataset.row).filter(k => k.startsWith('RANK-')));
+    assert.deepEqual(order, ['RANK-1', 'RANK-2', 'RANK-3', 'RANK-4']);
+    await shot('22-summary-keeps-changed-time-order');
+    for (const key of keys) {
+      await page.click(`.va-row[data-row="${key}"]`);
+      await page.click('.va-d [data-action="untrack"]');
+      await page.waitForSelector(`.va-row[data-row="${key}"]`, { state: 'detached' });
+    }
+  });
+
   await t.test('updates: a newer release is announced, Later hides it, and up to date again', async () => {
     const opened = () => app.evaluate(() => global.__issuemonOpened || []);
     const status = async () => (await page.textContent('#update-status')).replace(/\s+/g, ' ').trim();

@@ -121,6 +121,10 @@
 
   // Notifications
   'notify.summary': { one: '{n} ticket modifié', other: '{n} tickets modifiés' },
+  'notify.mentionsYou': '{key} vous mentionne',
+  'notify.summary.assignment': { one: '{n} vous est assigné', other: '{n} vous sont assignés' },
+  'notify.summary.mention': { one: '{n} vous mentionne', other: '{n} vous mentionnent' },
+  'notify.summary.risk': { one: '{n} avec des changements de risque', other: '{n} avec des changements de risque' },
   'notify.assignedToYou': '{key} vous a été attribué',
   'notify.changes': { one: '{key} modifié', other: '{key} · {n} modifications' },
   'notify.test.title': 'Notification de test d’IssueMon',
