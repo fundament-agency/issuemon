@@ -237,8 +237,19 @@
       <div><dt>${esc(t('field.status'))}</dt><dd>${issuePill(i)}</dd></div>
       <div><dt>${esc(t('field.assignee'))}</dt><dd>${person(i.assignee)}</dd></div>
       <div><dt>${esc(t('field.priority'))}</dt><dd>${prio(i.priority)}<span>${esc(i.priority || t('detail.noPriority'))}</span></dd></div>
+      ${(i.labels || []).length ? `<div><dt>${esc(t('field.labels'))}</dt><dd class="meta-labels">${i.labels.map(label => `<span class="chip">${esc(label)}</span>`).join('')}</dd></div>` : ''}
+      ${(i.fixVersions || []).length ? `<div><dt>${esc(t('field.fixVersion'))}</dt><dd class="meta-versions">${esc(i.fixVersions.join(', '))}</dd></div>` : ''}
       ${updated ? `<div><dt>${esc(t('detail.lastUpdated'))}</dt><dd><span title="${i.updated ? fmtTime(i.updated) : ''}">${rel(i.updated)}</span></dd></div>` : ''}
     </dl>`;
+  }
+
+  function relationsHtml(i) {
+    const row = (issue, type = '', summary = true) => `<li>${type ? `<span>${esc(type)}</span> ` : ''}<button class="linkish" data-action="related" data-key="${esc(issue.key)}">${esc(issue.key)}</button>${summary && issue.summary ? ` <span>${esc(issue.summary)}</span>` : ''} · ${issuePill(issue)}</li>`;
+    const section = (kind, title, rows) => `<section class="va-relations" data-relations="${kind}"><h3 class="va-sec">${esc(title)}</h3><ul>${rows}</ul></section>`;
+    const subtasks = i.subtasks || [], links = i.links || [];
+    return (i.parent ? section('parent', t('detail.parent'), row(i.parent)) : '')
+      + (subtasks.length ? section('subtasks', t('detail.subtasks', { done: subtasks.filter(s => s.statusCat === 'done').length, total: subtasks.length }), subtasks.map(s => row(s)).join('')) : '')
+      + (links.length ? section('links', t('detail.links'), links.map(l => row(l.issue, l.type || t('detail.related'), false)).join('')) : '');
   }
 
   /** Description of a tracked issue; texts over DESC_LONG characters stay collapsed until "More". */
@@ -607,6 +618,7 @@
           : `<span class="va-done">${icon('check')}${esc(lastProcessedAt(tr) ? t('detail.processedAgo', { when: rel(lastProcessedAt(tr)) }) : t('detail.nothingToProcess'))}</span>`}
         ${actions}
       </div>
+      ${relationsHtml(i)}
       ${descriptionHtml(i)}
       ${p.length
         ? `<h3 class="va-sec">${esc(t('detail.newSince'))} <span class="chip">${p.length}</span></h3>${timeline(p)}`
@@ -632,6 +644,7 @@
         <button class="btn primary" data-action="jira" data-key="${esc(key)}">${icon('external')}${esc(t('detail.openInJira'))}</button>
         ${find(key) ? `<span class="va-done">${icon('eye')}${esc(t('stale.alreadyTracked'))}</span>` : `<button class="btn" data-action="track" data-key="${esc(key)}">${icon('eye')}${esc(t('stale.trackToo'))}</button>`}
       </div>
+      ${relationsHtml(i)}
       ${activityHtml(key)}
     </div>`;
   }
@@ -1358,6 +1371,12 @@
     'toggle-desc': d => { UI.descOpen[d.key] = !UI.descOpen[d.key]; render(); },
     'toggle-done': () => { if (!inbox().tracked.query) { UI.doneOpen = !UI.doneOpen; render(); } }, // with a filter the group stays open
     'untrack-done': () => untrackDone(),
+    related: d => {
+      if (find(d.key)) return focusIssue(d.key);
+      const keys = parseKeys(d.key);
+      if (keys.length !== 1 || keys[0] !== d.key) return;
+      snack(t('detail.trackRelated', { key: d.key }), { label: t('detail.track'), fn: () => add(d.key) });
+    },
     track: d => track(d.key),
     jira: d => api.openInJira(d.key),
     check: () => api.checkNow(),
