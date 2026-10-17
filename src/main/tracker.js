@@ -97,6 +97,7 @@ function updateMentionFlag(change, accountId) {
   else delete change.mentionsMe;
 }
 
+/** Runs `fn` on every item, `limit` at a time. Resolves only when every worker is done; `fn` must not throw (a throw would leave the others running). */
 async function mapLimit(items, limit, fn) {
   let i = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -104,6 +105,9 @@ async function mapLimit(items, limit, fn) {
   });
   await Promise.all(workers);
 }
+
+/** Which of several errors of one check the check reports: a login problem first, then a rate limit, then the first one. */
+const mostUrgent = errors => errors.find(e => e.code === 'auth') || errors.find(e => e.code === 'rate_limited') || errors[0] || null;
 
 /** Comma-separated text or an array → list without empty values. */
 const commaList = value => (Array.isArray(value) ? value : String(value || '').split(',')).map(x => String(x).trim()).filter(Boolean);
@@ -253,8 +257,10 @@ class Tracker extends EventEmitter {
           if (gen !== this.credentialsGen) return { ok: true, found: 0 };
           this.setMe(me);
         }
-        fresh = await this.checkTracked(client, { quiet: this.data.reconnected, gen });
+        let error;
+        ({ fresh, error } = await this.checkTracked(client, { quiet: this.data.reconnected, gen }));
         if (gen !== this.credentialsGen) return { ok: true, found: 0 };
+        if (error) throw error; // what was recorded before it is announced all the same (below)
         this.data.reconnected = false; // only the first check that got an answer after (re)connecting is quiet
         await this.refreshStale(client);
         if (gen !== this.credentialsGen) return { ok: true, found: 0 };
@@ -289,18 +295,24 @@ class Tracker extends EventEmitter {
     return this.running;
   }
 
-  /** `quiet`: issues missing from the answer are remembered (and shown in red) but not announced, such as on a new site. */
+  /**
+   * `quiet`: issues missing from the answer are remembered (and shown in red) but not announced, such as on a new site.
+   * Returns `{ fresh, error }`: the changes to announce and the error that failed part of the check, if any. A request that fails
+   * for one issue only makes that issue wait (its seenUntil stays, so the next check tries again); every other issue is recorded
+   * as usual, and when this returns no worker is still running.
+   */
   async checkTracked(client, { quiet = false, gen = this.credentialsGen } = {}) {
     const entries = this.data.tracked.filter(t => !t.loading);
-    if (!entries.length) return [];
+    if (!entries.length) return { fresh: [], error: null };
     const { issues, errors } = await client.bulkFetch(entries.map(t => t.id || t.key));
-    if (gen !== this.credentialsGen) return [];
+    if (gen !== this.credentialsGen) return { fresh: [], error: null };
     const byId = new Map(issues.map(i => [i.id, i]));
     const byKey = new Map(issues.map(i => [i.key, i]));
     const failed = new Set(errors.map(e => String(e?.id))); // issueErrors: Jira could not return these right now (a retriable error)
     const fresh = [];
     const now = this.now();
     const gone = []; // first-time missing issues: recorded only after identity verification
+    const failures = []; // requests that failed for one issue
 
     await mapLimit(entries, PARALLEL, async t => {
       if (gen !== this.credentialsGen) return;
@@ -339,7 +351,12 @@ class Tracker extends EventEmitter {
         const [histories, comments] = await Promise.all([client.changelog(t.key), client.comments(t.key)]);
         found = [...changesFromChangelog(histories, since), ...changesFromComments(comments, since, this.commentTexts(t))];
       } catch (err) {
-        if (err.code === 'auth' || err.code === 'network' || err.code === 'rate_limited') throw err;
+        // Only a lasting refusal of the changelog falls back to a snapshot, which knows far less (no author, no comments or
+        // attachments). Anything that may pass makes this issue wait: its seenUntil stays and the next check asks again.
+        if (!(await this.refusesChangelog(client, t, err))) {
+          failures.push(err);
+          return;
+        }
         found = changesFromSnapshots(prev, next);
       }
 
@@ -361,17 +378,26 @@ class Tracker extends EventEmitter {
       this.prune(t);
       const news = added.filter(c => !c.processed);
       if (news.length) fresh.push({ key: t.key, summary: next.summary, changes: news });
-    }).catch(err => {
-      // Keep the red row across a failed check/restart, without recording a missing change yet.
-      if (gen === this.credentialsGen) for (const t of gone) t.error = this.t('error.trackedMissing');
-      throw err;
     });
+
+    if (failures.length && gen === this.credentialsGen) {
+      // Keep the red row across a failed check/restart, without recording a missing change yet.
+      for (const t of gone) t.error = this.t('error.trackedMissing');
+      return { fresh, error: mostUrgent(failures) };
+    }
 
     if (gone.length && gen === this.credentialsGen) { // after a change of credentials during this check, what the old site misses says nothing
       // Bad credentials can look like an answer too (Jira Cloud treats them as anonymous: 200, every issue left out): only report
       // when /myself still names the account we know. A failing /myself fails the check, so a dead token shows as an auth error.
-      const me = await client.myself();
-      if (gen !== this.credentialsGen) return [];
+      let me;
+      try {
+        me = await client.myself();
+      } catch (error) {
+        if (gen !== this.credentialsGen) return { fresh: [], error: null };
+        for (const t of gone) t.error = this.t('error.trackedMissing'); // red, not yet recorded; the changes found above are still announced
+        return { fresh, error };
+      }
+      if (gen !== this.credentialsGen) return { fresh: [], error: null };
       const same = !this.data.me?.accountId || me.accountId === this.data.me.accountId;
       this.setMe(me);
       for (const t of gone) t.error = this.t('error.trackedMissing');
@@ -386,7 +412,22 @@ class Tracker extends EventEmitter {
         }
       }
     }
-    return gen === this.credentialsGen ? fresh : [];
+    return { fresh: gen === this.credentialsGen ? fresh : [], error: null };
+  }
+
+  /**
+   * Is this error from the changelog or comments request a lasting refusal (403, or 404 while the issue still exists), as opposed
+   * to something that passes (a server error, a rate limit, no connection, an unreadable answer, an issue that just disappeared)?
+   */
+  async refusesChangelog(client, t, err) {
+    if (err.code === 'forbidden') return true;
+    if (err.code !== 'not_found') return false;
+    try {
+      const { issues } = await client.bulkFetch([t.id || t.key]); // 404 is also what a deleted issue answers
+      return issues.length > 0;
+    } catch {
+      return false;
+    }
   }
 
   /** Comment id → the latest text and mention ranges IssueMon recorded for it (as a new comment or an edit): the old text of the next edit. */

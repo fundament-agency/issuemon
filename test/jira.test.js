@@ -131,6 +131,14 @@ test('Jira client against the mock Jira', async t => {
     assert.equal(values[0].items[0].toString, 'v31');
   });
 
+  await t.test('changelog and comments throw on a 200 without the list or without JSON, as a transient error', async () => {
+    for (const [body, call] of [['{}', 'changelog'], ['{"values":null}', 'changelog'], ['{}', 'comment'], ['<html>Sign in</html>', 'comment'], ['', 'changelog']]) {
+      jira.fail(call, { status: 200, body });
+      await assert.rejects(call === 'comment' ? client.comments('WEB-1') : client.changelog('WEB-1'),
+        err => err.name === 'JiraError' && !err.code && !err.status && err.message.includes(call), body);
+    }
+  });
+
   await t.test('comments', async () => {
     jira.comment('WEB-1', 'Hallo');
     const comments = await client.comments('WEB-1');

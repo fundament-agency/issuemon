@@ -102,16 +102,29 @@ function createJiraClient({ baseUrl, email, token, userAgent = 'IssueMon', fetch
       throw new JiraError(t('error.jira.network', { host: url.host }), { code: 'network', cause: err });
     }
     if (!res.ok) throw await toError(res, method, url, t);
-    return res.status === 204 ? null : res.json();
+    if (res.status === 204) return null;
+    try {
+      return await res.json();
+    } catch (err) {
+      // A 200 that is no JSON (a proxy's or a portal's page) is no answer: no status and no code, so it counts as transient.
+      throw new JiraError(t('error.jira.unreadable', { call: `${method} ${url.pathname}` }), { cause: err });
+    }
+  }
+
+  /** The list in a paginated answer; a 200 without it is unreadable, like for bulkFetch, never an empty list. */
+  function listOf(res, listProp, path) {
+    if (!Array.isArray(res?.[listProp])) throw new JiraError(t('error.jira.unreadable', { call: `GET ${path}` }));
+    return res[listProp];
   }
 
   /** Fetches the last page of an oldest-first paginated list (at most 100 items). */
   async function latestPage(path, listProp) {
     const first = await request('GET', path, { query: { startAt: 0, maxResults: PAGE } });
-    const total = first.total ?? first[listProp]?.length ?? 0;
-    if (total <= PAGE) return first[listProp] || [];
+    const items = listOf(first, listProp, path);
+    const total = first.total ?? items.length;
+    if (total <= PAGE) return items;
     const last = await request('GET', path, { query: { startAt: Math.max(0, total - PAGE), maxResults: PAGE } });
-    return last[listProp] || [];
+    return listOf(last, listProp, path);
   }
 
   /** Plain issue types (see plainTypes) of a project, with a readable error if the project doesn't exist or you can't create issues in it. */
