@@ -49,6 +49,34 @@ test('a number in a URL parameter does not become a bare number', () => {
   assert.deepEqual(parseKeys('https://x.atlassian.net/browse/WEB-1?focusedCommentId=123', 'APP'), ['WEB-1']);
 });
 
+test('a sandbox link or a host ending in digits yields only the issue key', () => {
+  assert.deepEqual(parseKeys('https://acme-sandbox-952.atlassian.net/browse/WEB-12'), ['WEB-12']);
+  assert.deepEqual(parseKeys('https://team-42.atlassian.net/browse/WEB-12'), ['WEB-12']);
+  assert.deepEqual(parseKeys('acme-sandbox-952.atlassian.net/browse/WEB-12'), ['WEB-12']);
+});
+
+test('a link to a comment yields only the issue key', () => {
+  const url = 'https://acme.atlassian.net/browse/WEB-12?focusedCommentId=10234&page=com.atlassian.jira.plugin.system.issuetabpanels%3Acomment-tabpanel#comment-10234';
+  assert.deepEqual(parseKeys(url), ['WEB-12']);
+  assert.deepEqual(parseKeys(`(${url})`), ['WEB-12']);
+});
+
+test('keys in a jql parameter of a link are ignored', () => {
+  assert.deepEqual(parseKeys('https://acme.atlassian.net/browse/WEB-12?jql=key%20%3D%20WEB-3'), ['WEB-12']);
+  assert.deepEqual(parseKeys('https://acme.atlassian.net/jira/software/projects/WEB/issues?jql=key%20%3D%20WEB-3'), []);
+});
+
+test('board, backlog and queue links yield the key in the path or in selectedIssue', () => {
+  assert.deepEqual(parseKeys('https://x.atlassian.net/jira/software/projects/WEB/boards/12?selectedIssue=WEB-77&jql=key%3DWEB-3#WEB-4'), ['WEB-77']);
+  assert.deepEqual(parseKeys('https://x.atlassian.net/jira/software/c/projects/WEB/issues/WEB-12'), ['WEB-12']);
+  assert.deepEqual(parseKeys('https://x.atlassian.net/jira/servicedesk/projects/SD/queues/custom/1/SD-5/'), ['SD-5']);
+});
+
+test('a pasted list of links and plain keys gives all keys in order', () => {
+  const text = 'APP-1, https://acme-sandbox-952.atlassian.net/browse/WEB-12#comment-10234\nhttps://x.atlassian.net/jira/software/projects/WEB/boards/1?selectedIssue=OPS-3 ops-4 7';
+  assert.deepEqual(parseKeys(text, 'DEF'), ['APP-1', 'WEB-12', 'OPS-3', 'OPS-4', 'DEF-7']);
+});
+
 test('isKey validates strictly', () => {
   assert.equal(isKey('WEB-1423'), true);
   assert.equal(isKey('web-1423'), false);
