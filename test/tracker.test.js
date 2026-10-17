@@ -808,6 +808,75 @@ test('stale: a status that does not exist in this Jira is skipped with a warning
   assert.equal(tracker.data.stale.warning, 'Status does not exist in your Jira and was ignored: Live');
 });
 
+test('stale: an unknown status with an apostrophe or a backslash is skipped with a warning too', async t => {
+  const { jira, tracker } = await setup(t, { excluded: ['Closed'] });
+  jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  tracker.saveSettings({ excluded: "Backlog, Won't Fix" });
+  await tracker.check();
+  assert.equal(tracker.data.stale.error, null);
+  assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['S-1']);
+  assert.equal(tracker.data.stale.warning, "Status does not exist in your Jira and was ignored: Won't Fix");
+
+  tracker.saveSettings({ excluded: 'On hold\\, Say "hi", Backlog' });
+  await tracker.check();
+  assert.equal(tracker.data.stale.error, null);
+  assert.equal(tracker.data.stale.warning, 'Statuses do not exist in your Jira and were ignored: On hold\\, Say "hi"');
+  assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['S-1']);
+});
+
+test('stale: an unknown status is found in a 400 in another language, by the names that were sent', async t => {
+  const { jira, tracker } = await setup(t, { excluded: ['Fix', "Won't Fix", 'Backlog'] });
+  jira.unknownStatusText = s => `De waarde '${s}' bestaat niet voor het veld 'status'.`;
+  jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  jira.addIssue({ key: 'S-2', summary: 'in Fix', status: 'Fix', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  await tracker.check();
+  assert.equal(tracker.data.stale.error, null);
+  assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['S-1']);
+  assert.match(tracker.data.stale.warning, /Won't Fix/);
+  const sent = jira.requests.findLast(r => r.path === '/rest/api/3/search/jql').body.jql;
+  assert.match(sent, /status NOT IN \("Fix", "Backlog"\)/); // Fix is a status too, and "Fix" in "Won't Fix" does not make it unknown
+});
+
+test('stale: in another language only a quoted name in Jira\'s own message is unknown, an unquoted one is not', async t => {
+  const { jira, tracker } = await setup(t, { excluded: ['Closed', 'Live', 'Fix'] });
+  jira.unknownStatusText = s => `Der Wert ${s} existiert nicht für das Feld status.`;
+  jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  tracker.saveSettings({ excluded: 'Closed, Parked' });
+  await tracker.check();
+  assert.match(tracker.data.stale.error, /Parked/); // no quotes: nothing to go on, so the error stays
+  assert.equal(tracker.data.stale.warning, null);
+  assert.match(jira.requests.findLast(r => r.path === '/rest/api/3/search/jql').body.jql, /"Closed", "Parked"/);
+});
+
+test('stale: the words around Jira\'s message never make an excluded status unknown, in any language', async t => {
+  for (const language of ['en', 'nl', 'fr', 'de', 'es']) {
+    const catalog = require(`../src/shared/locales/${language}`);
+    // every word of IssueMon's own "Jira rejected the request (400, POST …): …" in this language, as a status name
+    const words = [...new Set(catalog['error.jira.rejectedDetail'].replace(/\{\w+\}/g, ' ').split(/[^\p{L}]+/u).filter(w => w.length > 2))];
+    const { jira, tracker } = await setup(t, { excluded: ['Backlog'], language });
+    jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+    jira.searchStatus = 400;
+    tracker.saveSettings({ excluded: words.join(', ') });
+    await tracker.check();
+    const searches = jira.requests.filter(r => r.path === '/rest/api/3/search/jql');
+    const jql = searches.findLast(() => true).body.jql;
+    for (const w of words) assert.ok(jql.includes(`"${w}"`), `${language}: "${w}" is still excluded`);
+    assert.equal(tracker.data.stale.warning, null, language);
+    assert.match(tracker.data.stale.error, /Mock: search fails/, language);
+  }
+});
+
+test('stale: a failing request clears the warning of an earlier answer', async t => {
+  const { jira, tracker } = await setup(t, { excluded: ['Closed', 'Live'] });
+  jira.addIssue({ key: 'S-1', summary: 'open', assignee: jira.people.me, updated: Date.now() - 20 * DAY });
+  await tracker.check();
+  assert.match(tracker.data.stale.warning, /Live/);
+  jira.searchStatus = 400;
+  await tracker.check();
+  assert.match(tracker.data.stale.error, /400/);
+  assert.equal(tracker.data.stale.warning, null);
+});
+
 test('stale: several people at once, only you by default', async t => {
   const { jira, tracker } = await setup(t);
   const { me, sam, alex } = jira.people;

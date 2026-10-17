@@ -2,8 +2,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  ISSUE_FIELDS, parseJiraDate, normalizeIssue, changesFromChangelog, changesFromComments, changesFromSnapshots, adfToText, staleJql, excludedProject,
+  ISSUE_FIELDS, parseJiraDate, normalizeIssue, changesFromChangelog, changesFromComments, changesFromSnapshots, adfToText, staleJql, unknownStatuses, excludedProject,
 } = require('../src/main/changes');
+const { jqlList } = require('./support/mock-jira');
 
 test('parseJiraDate understands Jira offsets without a colon', () => {
   assert.equal(parseJiraDate('2026-10-09T13:02:11.123+0200'), Date.UTC(2026, 9, 9, 11, 2, 11, 123));
@@ -221,6 +222,43 @@ test('staleJql: Backlog is just a status, without duplicates and with statuses t
   assert.equal(staleJql({ staleDays: 14, excluded: ['Closed', 'backlog', 'Backlog'] }), 'assignee = currentUser() AND statusCategory != Done AND status NOT IN ("Closed", "backlog") AND updated <= -14d ORDER BY updated ASC');
   assert.equal(staleJql({ staleDays: 14, excluded: ['Closed'], excludeBacklog: true }), 'assignee = currentUser() AND statusCategory != Done AND status NOT IN ("Closed") AND updated <= -14d ORDER BY updated ASC'); // the old flag no longer does anything
   assert.equal(staleJql({ staleDays: 14, excluded: ['Closed', 'On hold'], skip: ['on hold'] }), 'assignee = currentUser() AND statusCategory != Done AND status NOT IN ("Closed") AND updated <= -14d ORDER BY updated ASC');
+});
+
+test('staleJql: backslashes and double quotes reach Jira exactly as typed', () => {
+  const excluded = ['On hold\\', 'Say "hi"', 'C:\\temp\\"x"', "Won't Fix"];
+  const jql = staleJql({ staleDays: 14, excluded });
+  assert.match(jql, /"On hold\\\\", "Say \\"hi\\""/);
+  assert.deepEqual(jqlList(jql, 'status\\s+NOT\\s+IN'), excluded); // read back like Jira does
+  assert.deepEqual(jqlList(staleJql({ staleDays: 14, excluded: [], people: ['a\\b"c'] }), 'assignee\\s+IN'), ['a\\b"c']);
+});
+
+test('mock Jira reads JQL strings strictly: an unterminated string is an error', () => {
+  assert.throws(() => jqlList('status NOT IN ("On hold\\")', 'status\\s+NOT\\s+IN'), /has not been completed/); // what an unescaped backslash used to produce
+  assert.deepEqual(jqlList('status NOT IN ("A, B", C)', 'status\\s+NOT\\s+IN'), ['A, B', 'C']);
+});
+
+test('unknownStatuses: reads the names from Jira\'s 400, also with quotes in them or in another language', () => {
+  const en = s => `The value '${s}' does not exist for the field 'status'.`;
+  assert.deepEqual(unknownStatuses([en('Live')], ['Live', 'Closed']), ['Live']);
+  assert.deepEqual(unknownStatuses([en("Won't Fix")], ["Won't Fix"]), ["Won't Fix"]);
+  assert.deepEqual(unknownStatuses([en('Live'), en("It's 'on'")], []), ['Live', "It's 'on'"]);
+  assert.deepEqual(unknownStatuses([], ['Live']), []);
+  assert.deepEqual(unknownStatuses(undefined, ['Live']), []);
+  // each message on its own: the lazy match does not run from one message into the next
+  assert.deepEqual(unknownStatuses(["The value 'acc-1' does not exist for the field 'assignee'.", en('Live')], ['Live']), ['Live']);
+});
+
+test('unknownStatuses: in another language the sent name must stand between quotes in Jira\'s message', () => {
+  const sent = ['Closed', "Won't Fix", 'Fix', 'Live'];
+  assert.deepEqual(unknownStatuses(["La valeur « Won't Fix » n'existe pas pour le champ 'status'."], sent), ["Won't Fix"]);
+  assert.deepEqual(unknownStatuses(['Der Wert „Live“ existiert nicht für das Feld „status“.'], sent), ['Live']);
+  assert.deepEqual(unknownStatuses(['El valor “live” no existe.'], sent), ['Live']); // case-insensitive
+  assert.deepEqual(unknownStatuses(['De waarde ‘Live’ bestaat niet.'], sent), ['Live']);
+  assert.deepEqual(unknownStatuses(['De waarde "Closed" en \'Live\' bestaan niet.'], sent), ['Closed', 'Live']);
+  assert.deepEqual(unknownStatuses(["De waarde 'Won't Fix' bestaat niet."], sent), ["Won't Fix"]); // "Fix" alone is not quoted
+  // without quotes a name proves nothing, also not as a whole word or inside one
+  assert.deepEqual(unknownStatuses(['Der Wert Live existiert nicht. Please fix the Closed query.'], sent), []);
+  assert.deepEqual(unknownStatuses(['Something else is wrong.'], sent), []);
 });
 
 test('staleJql: issues of several people, by account id', () => {

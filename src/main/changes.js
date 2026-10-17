@@ -258,7 +258,8 @@ function excludedProject({ excludedProjects = [] }) {
   return issue => patterns.some(r => r.test(issue.project || '') || r.test(issue.projectKey || ''));
 }
 
-const quote = s => `"${String(s).replace(/"/g, '\\"')}"`;
+/** A JQL string: Jira reads \ and " inside quotes as escapes, so both are escaped and the value arrives exactly as typed. */
+const quote = s => `"${String(s).replace(/[\\"]/g, '\\$&')}"`;
 
 /** JQL for the stale list: issues of `people` (account ids), or your own without people; with staleUnassigned also
     issues without an assignee. Ordered by last updated: oldest on top by default, newest on top with staleSort 'newest'. */
@@ -273,6 +274,22 @@ function staleJql({ staleDays, excluded, people = [], skip = [], staleSort, stal
   return `${who}${notDone}${notIn} AND updated <= -${days}d ORDER BY updated ${staleSort === 'newest' ? 'DESC' : 'ASC'}`;
 }
 
+/** Quote characters around a name in a message: '…', "…", «…», „…“, “…”, ‘…’ and the like. */
+const QUOTE_PAIRS = [["'", "'"], ['"', '"'], ['«', '»'], ['»', '«'], ['„', '“'], ['„', '”'], ['“', '”'], ['‘', '’']];
+const escapeRegExp = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The statuses Jira's 400 says do not exist, out of the `sent` excluded statuses. `details` are Jira's own messages (JiraError.details),
+    not IssueMon's wording around them. Jira words it as "The value 'Won't Fix' does not exist for the field 'status'." (the name may
+    hold quotes, so the match runs up to the closing words, per message). In another language that fails; then the sent names that
+    occur between quote characters in a message count. Without quotes a name proves nothing: "Fix" is also part of a word. */
+function unknownStatuses(details, sent) {
+  const messages = array(details).map(String);
+  const listed = messages.flatMap(m => [...m.matchAll(/value '(.+?)' does not exist for the field 'status'/gi)].map(x => x[1]));
+  if (listed.length) return listed;
+  return sent.filter(name => messages.some(m => QUOTE_PAIRS.some(([open, close]) =>
+    new RegExp(`${escapeRegExp(open)}\\s*${escapeRegExp(name)}\\s*${escapeRegExp(close)}`, 'i').test(m))));
+}
+
 module.exports = {
   parseJiraDate,
   normalizeIssue,
@@ -282,6 +299,7 @@ module.exports = {
   changesFromSnapshots,
   adfToText,
   staleJql,
+  unknownStatuses,
   staleExcluded,
   excludedProject,
   ISSUE_FIELDS,

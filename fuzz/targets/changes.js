@@ -254,8 +254,8 @@ const properties = [
     description: 'Excluded statuses your Jira does not know are skipped with a warning naming them, and the Stale list still loads (README, Stale).',
     runs: 300,
     gen(r) {
-      // Names the mock Jira can read back: no quote, backslash, comma or parenthesis (jql.quoting covers those).
-      const unknown = r.array(() => `${r.pick(['Won', 'Wait', 'Parked', 'Klaar', 'Geparkt', 'À faire', 'Qa'])}${r.pick(['', "'t", ' ', '-', "'"])}${r.pick(['', 'Fix', 'Do', ' for QA', ' 2'])}`.trim() || 'Parked', 0, 3);
+      // Names the mock Jira can read back: no comma or parenthesis; with apostrophes, double quotes and backslashes.
+      const unknown = r.array(() => `${r.pick(['Won', 'Wait', 'Parked', 'Klaar', 'Geparkt', 'À faire', 'Qa'])}${r.pick(['', "'t", ' ', '-', "'", '\\', '"'])}${r.pick(['', 'Fix', 'Do', ' for QA', ' 2'])}`.trim() || 'Parked', 0, 3);
       return { known: r.array(() => r.pick(KNOWN_STATUSES), 0, 2), unknown: [...new Set(unknown)].filter(u => !KNOWN_STATUSES.some(k => k.toLowerCase() === u.toLowerCase())) };
     },
     async check({ known, unknown }) {
