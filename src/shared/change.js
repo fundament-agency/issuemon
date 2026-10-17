@@ -34,12 +34,14 @@
   const assignedToMe = (c, meName) => c.field === 'assignee' && sameName(c.to, meName);
 
   /** One line of plain text, for notifications. `me` is your display name. */
-  function describe(c, { me, t = EN } = {}) {
+  function describe(c, { me, key = '', t = EN } = {}) {
     if (c.field === 'gone') return t('change.gone');
     const who = c.author?.name || t('person.someone');
     if (assignedToMe(c, me)) return t('change.describe.assignedToYou', { who });
     switch (c.field) {
-      case 'comment': return t(c.edited ? 'change.describe.commentEdited' : 'change.describe.comment', { who, text: clip(String(c.to || '').replace(/\s+/g, ' '), 110) });
+      case 'comment':
+        if (c.mentionsMe) return t('change.describe.mentionedYou', { who, key });
+        return t(c.edited ? 'change.describe.commentEdited' : 'change.describe.comment', { who, text: clip(String(c.to || '').replace(/\s+/g, ' '), 110) });
       case 'description': return t('change.describe.description', { who });
       case 'attachment':
         if (c.to) return t('change.describe.attachmentAdded', { who, name: c.to });
@@ -73,6 +75,7 @@
 
   /** Text of the chip for one change, and whether it is an assignment to you (that one stands out). */
   function chip(c, { me, t = EN } = {}) {
+    if (c.field === 'comment' && c.mentionsMe) return { text: t('change.chip.mentionsYou'), mine: true };
     if (c.field === 'assignee') {
       if (assignedToMe(c, me)) return { text: t('change.chip.assignedToYou'), mine: true };
       return { text: c.to ? t('change.chip.assigned', { to: clip(c.to, 28) }) : t('change.chip.unassigned'), mine: false };

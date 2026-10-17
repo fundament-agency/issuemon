@@ -900,6 +900,59 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await page.waitForSelector('[data-row="WEB-1201"]', { state: 'detached' });
   });
 
+  await t.test('new and edited comment mentions highlight actual nodes, escape text and notify', async () => {
+    const { me, sam } = jira.people;
+    const row = '.va-row[data-row="WEB-1201"]';
+    const pending = '.va-d .tl-i:not(.done)';
+    const before = (await app.evaluate(() => global.__issuemonNotifications)).length;
+    const at = Date.now();
+    const issue = jira.comment('WEB-1201', '@Demo User is plain text. <img src=x onerror=alert(1)> Please review', sam, at, [
+      { ...me, accountId: 'another-account' }, me,
+    ]);
+    const id = issue.comments.at(-1).id;
+    await checkNow();
+    await page.click('[data-view="changed"]');
+    await page.waitForSelector(`${row}.mine .chip.me`);
+    assert.equal(await page.textContent(`${row} .chip.me`), 'Mentions you');
+    await page.click(row);
+    await page.waitForSelector(`${pending} .mention-me`);
+    assert.deepEqual(await page.locator(`${pending} .mention-me`).allTextContents(), ['@Demo User']);
+    assert.equal(await page.locator(`${pending} img`).count(), 0);
+    assert.match(await page.textContent(pending), /<img src=x onerror=alert\(1\)>/);
+    let notes = await app.evaluate(() => global.__issuemonNotifications);
+    assert.deepEqual(notes.slice(before).map(n => n.body), ['Sam Rivera mentioned you on WEB-1201']);
+    await shot('20-comment-mentions');
+    await page.click('.va-d [data-action="mark"]');
+    await page.waitForSelector(row, { state: 'detached' });
+
+    // An edit keeps the word diff while highlighting the real mention, even hostile mention text.
+    const hostile = { ...me, displayName: '<b>Demo</b>' };
+    jira.editComment('WEB-1201', id, 'Ready for review', sam, at + 1000, [hostile]);
+    await checkNow();
+    await page.waitForSelector(`${row}.mine .chip.me`);
+    await page.click(row);
+    await page.waitForSelector(`${pending} .diff .mention-me`);
+    assert.equal(await page.textContent(`${pending} .mention-me`), '@<b>Demo</b>');
+    assert.equal(await page.locator(`${pending} .mention-me b`).count(), 0);
+    notes = await app.evaluate(() => global.__issuemonNotifications);
+    assert.equal(notes.at(-1).body, 'Sam Rivera mentioned you on WEB-1201');
+    await shot('20-comment-mention-edited');
+    await page.click('.va-d [data-action="mark"]');
+    await page.waitForSelector(row, { state: 'detached' });
+
+    jira.editComment('WEB-1201', id, 'Ready for review', sam, at + 2000, [{ ...hostile, accountId: 'another-account' }]);
+    await checkNow();
+    await page.waitForSelector(row);
+    assert.equal(await page.locator(`${row}.mine`).count(), 0);
+    assert.equal(await page.locator(`${row} .chip.me`).count(), 0);
+    await page.click(row);
+    assert.equal(await page.locator(`${pending} .mention-me`).count(), 0);
+    notes = await app.evaluate(() => global.__issuemonNotifications);
+    assert.match(notes.at(-1).body, /edited a comment/);
+    await page.click('.va-d [data-action="mark"]');
+    await page.waitForSelector(row, { state: 'detached' });
+  });
+
   await t.test('updates: a newer release is announced, Later hides it, and up to date again', async () => {
     const opened = () => app.evaluate(() => global.__issuemonOpened || []);
     const status = async () => (await page.textContent('#update-status')).replace(/\s+/g, ' ').trim();

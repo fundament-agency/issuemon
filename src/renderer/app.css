@@ -270,6 +270,7 @@
 .help dt { color: var(--muted); font-size: 12px; }
 .help dd { margin: 0; font-size: 13.5px; color: var(--text); }
 
+.tl .mention-me { background: var(--accent-soft); color: var(--accent); border-radius: 3px; padding: 0 2px; font-weight: 600; }
 .va-relations ul { list-style: none; margin: 8px 0 0; padding: 0; }
 .va-relations li { margin: 8px 0; line-height: 1.6; overflow-wrap: anywhere; }
 .meta dd { flex-wrap: wrap; }

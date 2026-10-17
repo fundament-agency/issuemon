@@ -249,3 +249,29 @@ test('excludedProject: each pattern applies to name and key, with * as wildcard,
   assert.equal(is(null, null), false);
   assert.equal(excludedProject({})({ project: 'ARCHIVE-x', projectKey: 'X' }), false);
 });
+
+test('comment mentions preserve account ids and exact ranges through ADF formatting', () => {
+  const body = { type: 'doc', content: [
+    { type: 'paragraph', content: [{ type: 'text', text: '  @Demo User is plain text. ' }] },
+    { type: 'bulletList', content: [{ type: 'listItem', content: [{ type: 'paragraph', content: [
+      { type: 'mention', attrs: { id: 'acc-me', text: '@Demo User' } },
+      { type: 'text', text: ' <img src=x> ' },
+      { type: 'mention', attrs: { id: 'acc-other', text: '@Demo User' } },
+    ] }] }] },
+  ] };
+  const [c] = changesFromComments([{ id: '1', author, created: '2026-10-03', body }], null);
+  assert.equal(c.to, '@Demo User is plain text. \n\n• @Demo User <img src=x> @Demo User');
+  assert.deepEqual(c.mentions.map(m => [m.accountId, c.to.slice(m.start, m.end)]), [['acc-me', '@Demo User'], ['acc-other', '@Demo User']]);
+  assert.equal(c.mentions[0].start, c.to.indexOf('@Demo User', 1));
+  assert.equal(c.mentionsMe, undefined); // the tracker supplies the current account
+});
+
+test('a same-text edit that changes the mention account is recorded', () => {
+  const body = { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'mention', attrs: { id: 'new', text: '@Sam' } }] }] };
+  const [c] = changesFromComments([{ id: '1', author, created: '2026-10-01', updated: '2026-10-03', body }], Date.UTC(2026, 9, 2), new Map([
+    ['1', { text: '@Sam', mentions: [{ start: 0, end: 4, accountId: 'old' }] }],
+  ]));
+  assert.equal(c.edited, true);
+  assert.equal(c.from, '@Sam');
+  assert.equal(c.mentions[0].accountId, 'new');
+});

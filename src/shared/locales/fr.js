@@ -33,6 +33,8 @@
   // One change in words
   'change.empty': 'vide',
   'change.describe.assignedToYou': '{who} · Vous a été attribué',
+  'change.chip.mentionsYou': 'Vous mentionne',
+  'change.describe.mentionedYou': '{who} vous a mentionné sur {key}',
   'change.describe.comment': '{who} : « {text} »',
   'change.describe.commentEdited': '{who} a modifié un commentaire : « {text} »',
   'change.describe.description': '{who} a modifié la description',

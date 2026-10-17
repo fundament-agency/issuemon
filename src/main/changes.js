@@ -108,8 +108,8 @@ function changesFromChangelog(histories, since) {
 /**
  * Comments → changes, only after `since` (exclusive). A comment created after `since` is a new comment with its latest
  * text (id `c<id>`). An older comment edited after `since` is an edit by its updateAuthor (id `c<id>@<edit time>`, so
- * every edit counts once); `previous` (comment id → text IssueMon saw before) gives its old text, else `from` is null.
- * A comment IssueMon already saw counts only as an edit, and not when its text is unchanged (a save without changes,
+ * every edit counts once); `previous` (comment id → text, or { text, mentions } IssueMon saw before) gives its old text, else `from` is null.
+ * A comment IssueMon already saw counts only as an edit, and not when its text and mention targets are unchanged (a save without changes,
  * or a new visibility).
  */
 function changesFromComments(comments, since, previous = new Map()) {
@@ -117,17 +117,20 @@ function changesFromComments(comments, since, previous = new Map()) {
   for (const c of comments || []) {
     const at = parseJiraDate(c.created);
     if (at == null) continue;
-    const to = adfToText(c.body);
-    const seen = previous.get(String(c.id));
+    const { text: to, mentions } = adfContent(c.body);
+    const metadata = mentions.length ? { mentions } : {};
+    const prior = previous.get(String(c.id));
+    const seen = typeof prior === 'object' ? prior?.text : prior;
+    const sameMentions = JSON.stringify(prior?.mentions || []) === JSON.stringify(mentions);
     if ((since == null || at > since) && seen === undefined) {
-      out.push({ id: `c${c.id}`, at, author: user(c.author), field: 'comment', label: 'Comment', from: null, to });
+      out.push({ id: `c${c.id}`, at, author: user(c.author), field: 'comment', label: 'Comment', from: null, to, ...metadata });
       continue;
     }
     const edited = parseJiraDate(c.updated);
-    if (edited == null || (since != null && edited <= since) || seen === to) continue;
+    if (edited == null || (since != null && edited <= since) || (seen === to && sameMentions)) continue;
     out.push({
       id: `c${c.id}@${edited}`, at: edited, author: user(c.updateAuthor || c.author), field: 'comment', label: 'Comment',
-      edited: true, from: seen ?? null, to,
+      edited: true, from: seen ?? null, to, ...metadata,
     });
   }
   return out;
@@ -159,37 +162,72 @@ function changesFromSnapshots(prev, next) {
     .map(([field, from, to]) => ({ id: `s${at}-${field}`, at, author: null, field, label: field, from, to }));
 }
 
-/** Atlassian Document Format → readable plain text. */
-function adfToText(node) {
-  if (node == null) return '';
-  if (typeof node === 'string') return node;
-  const kids = () => (node.content || []).map(adfToText).join('');
+/** Readable text plus ranges of actual ADF mention nodes. No Jira markup or arbitrary attributes are stored. */
+function adfContent(node) {
+  const plain = text => ({ text, mentions: [] });
+  const join = (parts, separator = '') => parts.reduce((out, part, i) => {
+    if (i) out.text += separator;
+    const offset = out.text.length;
+    out.mentions.push(...part.mentions.map(m => ({ ...m, start: m.start + offset, end: m.end + offset })));
+    out.text += part.text;
+    return out;
+  }, plain(''));
+  const slice = (part, start, end) => ({
+    text: part.text.slice(start, end),
+    mentions: part.mentions.filter(m => m.start < end && m.end > start).map(m => ({
+      ...m, start: Math.max(start, m.start) - start, end: Math.min(end, m.end) - start,
+    })),
+  });
+  const trim = part => slice(part, part.text.length - part.text.trimStart().length, part.text.trimEnd().length);
+  if (node == null) return plain('');
+  if (typeof node === 'string') return plain(node);
+  const kids = () => join((node.content || []).map(adfContent));
+  const block = () => join([kids(), plain('\n\n')]);
   switch (node.type) {
-    case 'doc': return kids().replace(/\n{3,}/g, '\n\n').trim();
-    case 'text': return node.text || '';
-    case 'hardBreak': return '\n';
+    case 'doc': {
+      const part = kids();
+      const pieces = [];
+      let start = 0;
+      for (const m of part.text.matchAll(/\n{3,}/g)) {
+        pieces.push(slice(part, start, m.index), plain('\n\n'));
+        start = m.index + m[0].length;
+      }
+      pieces.push(slice(part, start, part.text.length));
+      return trim(join(pieces));
+    }
+    case 'text': return plain(node.text || '');
+    case 'hardBreak': return plain('\n');
     case 'paragraph':
     case 'heading':
     case 'blockquote':
-    case 'panel': return `${kids()}\n\n`;
+    case 'panel':
+    case 'codeBlock': return block();
     case 'bulletList':
-    case 'orderedList': return `${(node.content || []).map((li, i) => `${node.type === 'orderedList' ? `${i + 1}.` : '•'} ${adfToText(li).trim()}`).join('\n')}\n\n`;
+    case 'orderedList': return join([join((node.content || []).map((li, i) => join([
+      plain(node.type === 'orderedList' ? `${i + 1}. ` : '• '), trim(adfContent(li)),
+    ])), '\n'), plain('\n\n')]);
     case 'listItem': return kids();
-    case 'codeBlock': return `${kids()}\n\n`;
-    case 'mention': return node.attrs?.text || '@someone'; // markers inside Jira text, not UI chrome: neutral English
-    case 'emoji': return node.attrs?.text || node.attrs?.shortName || '';
+    case 'mention': {
+      const text = node.attrs?.text || '@someone'; // Jira content, not UI chrome
+      const accountId = node.attrs?.id;
+      return { text, mentions: typeof accountId === 'string' && accountId ? [{ start: 0, end: text.length, accountId }] : [] };
+    }
+    case 'emoji': return plain(node.attrs?.text || node.attrs?.shortName || '');
     case 'inlineCard':
-    case 'blockCard': return node.attrs?.url || '';
-    case 'status': return `[${node.attrs?.text || ''}]`;
-    case 'date': return node.attrs?.timestamp ? new Date(+node.attrs.timestamp).toISOString().slice(0, 10) : '';
+    case 'blockCard': return plain(node.attrs?.url || '');
+    case 'status': return plain(`[${node.attrs?.text || ''}]`);
+    case 'date': return plain(node.attrs?.timestamp ? new Date(+node.attrs.timestamp).toISOString().slice(0, 10) : '');
     case 'mediaSingle':
-    case 'mediaGroup': return '[attachment]\n\n';
-    case 'media': return '';
-    case 'rule': return '———\n\n';
-    case 'table': return `${(node.content || []).map(row => (row.content || []).map(cell => adfToText(cell).trim()).join(' | ')).join('\n')}\n\n`;
+    case 'mediaGroup': return plain('[attachment]\n\n');
+    case 'media': return plain('');
+    case 'rule': return plain('———\n\n');
+    case 'table': return join([join((node.content || []).map(row => join((row.content || []).map(cell => trim(adfContent(cell))), ' | ')), '\n'), plain('\n\n')]);
     default: return kids();
   }
 }
+
+/** Atlassian Document Format → readable plain text. */
+const adfToText = node => adfContent(node).text;
 
 /** Statuses to exclude from the stale list: the configured list, without (case-insensitive) duplicates (Backlog is just a status). */
 function staleExcluded({ excluded }) {

@@ -33,6 +33,8 @@
   // One change in words
   'change.empty': 'leer',
   'change.describe.assignedToYou': '{who} · Dir zugewiesen',
+  'change.chip.mentionsYou': 'Erwähnt dich',
+  'change.describe.mentionedYou': '{who} hat dich in {key} erwähnt',
   'change.describe.comment': '{who}: „{text}“',
   'change.describe.commentEdited': '{who} hat einen Kommentar bearbeitet: „{text}“',
   'change.describe.description': '{who} hat die Beschreibung bearbeitet',
