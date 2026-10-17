@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- A property-based fuzzer for contributors: `npm run fuzz` tests the shared modules, the window's HTML and the tracker against the mock Jira with random, seeded inputs, including network failures, Jira changing during a check and a switch between two sites. It shrinks a failure to a small case with a replay command. Its first findings are issues #40–#46.
+
 ## [0.2.0] - 2026-10-17
 
 ### Added

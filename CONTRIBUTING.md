@@ -27,6 +27,7 @@ If your shell sets `ELECTRON_RUN_AS_NODE=1` (some terminals embedded in Electron
 ```bash
 npm test          # unit tests, fast
 npm run test:e2e  # drives the real Electron app against the mock Jira
+npm run fuzz      # property-based fuzzer, random seeded inputs (not part of npm test; see the README)
 ```
 
 - Unit and e2e tests run against the mock Jira in `test/support/mock-jira.js`. A new Jira field or endpoint goes in there too.

@@ -23,6 +23,7 @@
     "mock-jira": "node test/support/mock-jira.js",
     "test": "node --test \"test/**/*.test.js\"",
     "test:e2e": "node --test --test-concurrency=1 \"e2e/**/*.e2e.js\"",
+    "fuzz": "node fuzz/run.js",
     "preversion": "npm test",
     "icons": "electron scripts/make-icons.js",
     "pack": "install-electron && electron-builder --dir",

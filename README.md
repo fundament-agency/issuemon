@@ -110,7 +110,10 @@ npm test            # unit and integration tests, against the mock Jira
 npm run test:e2e    # drives the real app via Playwright through all flows; screenshots in e2e/screenshots/
 ISSUEMON_APP=dist/mac-arm64/IssueMon.app/Contents/MacOS/IssueMon npm run test:e2e   # same, against the built app (npm run pack)
 npm run icons       # regenerate the icons from SVG (scripts/make-icons.js)
+npm run fuzz        # property-based fuzzer: random, seeded inputs; see below
 ```
+
+`npm run fuzz` checks rules that must hold for every input, not just the examples in the tests: from `parseKeys`, the word diff and the ADF text up to the window's HTML (for escaping) and the tracker against the mock Jira, with transient network failures, Jira changing during a check, overlapping actions and a switch between two sites. A failure shows the broken rule, the input shrunk to a small case and a `--replay` command. `--seed`, `--runs`, `--only`, `--all` and `--list` are explained by `npm run fuzz -- --help`. It is not part of `npm test`, because it reports open bugs until they are fixed.
 
 On GitHub, the e2e tests run both from source and against the built Apple silicon app, which keeps fewer languages and has no SwiftShader (see *Building an app*); the release workflow tests the app it uploads.
 
@@ -138,6 +141,7 @@ scripts/     make-icons.js: renders the icons in build/ and src/assets/ from SVG
              artifact-build-completed.js: the .tar.xz next to each .dmg, and LZMA for the .dmg · verify-archives.sh: checks both
 test/        node:test tests + support/mock-jira.js
 e2e/         Playwright tests of the real Electron app
+fuzz/        run.js: the fuzzer · lib/: seeded inputs, shrinking, the tracker against the mock Jira, the renderer in a vm · targets/: the properties
 ```
 
 ### Environment variables
