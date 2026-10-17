@@ -19,6 +19,17 @@ const ISSUE_TYPES = [
 const jiraDate = ms => new Date(ms).toISOString().replace('Z', '+0000');
 const adf = text => ({ type: 'doc', version: 1, content: String(text).split('\n\n').map(p => ({ type: 'paragraph', content: [{ type: 'text', text: p }] })) });
 
+/** Append real ADF mentions; plain @names in the text remain text nodes. */
+function commentBody(text, mentions) {
+  const body = adf(text);
+  const content = body.content.at(-1).content;
+  for (const person of mentions) content.push(
+    { type: 'text', text: ' ' },
+    { type: 'mention', attrs: { id: person.accountId, text: `@${person.displayName}` } },
+  );
+  return body;
+}
+
 function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date.now, projects = ['WEB', 'OPS'] } = {}) {
   const people = {
     me: { accountId: 'acc-me', displayName: 'Demo User', emailAddress: email },
@@ -92,19 +103,19 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     return i;
   }
 
-  function comment(key, text, author = people.alex, at = now()) {
+  function comment(key, text, author = people.alex, at = now(), mentions = []) {
     const i = get(key);
-    i.comments.push({ id: String(++seq), author, body: adf(text), created: at, updated: at });
+    i.comments.push({ id: String(++seq), author, body: commentBody(text, mentions), created: at, updated: at });
     i.fields.updated = at;
     return i;
   }
 
   /** Edits a comment, as Jira does: new body, `updated` and `updateAuthor` on the comment, and `updated` on the issue. */
-  function editComment(key, commentId, text, author = people.alex, at = now()) {
+  function editComment(key, commentId, text, author = people.alex, at = now(), mentions = []) {
     const i = get(key);
     const c = i.comments.find(x => x.id === String(commentId));
     if (!c) throw new Error(`Mock: unknown comment ${commentId} on ${key}`);
-    Object.assign(c, { body: adf(text), updated: at, updateAuthor: author });
+    Object.assign(c, { body: commentBody(text, mentions), updated: at, updateAuthor: author });
     i.fields.updated = at;
     return i;
   }

@@ -176,3 +176,12 @@ test('a vanished issue: the same words everywhere, without an author', () => {
   assert.equal(describe(gone, { t: nl }), 'Niet meer toegankelijk (verwijderd, of je hebt er geen toegang meer toe)');
   assert.deepEqual(chip(gone, { t: nl }), { text: 'Niet meer toegankelijk', mine: false });
 });
+
+test('comment mentions get a personal chip and notification line, including edits', () => {
+  const c = { field: 'comment', mentionsMe: true, author: Sam, to: '@Demo User' };
+  assert.deepEqual(chip(c), { text: 'Mentions you', mine: true });
+  assert.equal(describe(c, { key: 'WEB-1423' }), 'Sam Rivera mentioned you on WEB-1423');
+  assert.equal(describe({ ...c, edited: true }, { key: 'WEB-1423' }), 'Sam Rivera mentioned you on WEB-1423');
+  assert.equal(describe({ ...c, mentionsMe: false }), 'Sam Rivera: “@Demo User”');
+  assert.equal(chip({ ...c, field: 'description' }).mine, false);
+});

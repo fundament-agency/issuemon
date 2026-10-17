@@ -1446,3 +1446,38 @@ test('updates: checkUpdates is a manual check by the update checker, dismissUpda
   assert.equal(tracker.dismissUpdate(), true);
   assert.deepEqual(calls, [['check', { manual: true }], ['dismiss']]);
 });
+
+test('comment mentions use account ids on new and edited records and retain own-change suppression', async t => {
+  const { jira, tracker, notes, store } = await setup(t);
+  const { me, sam } = jira.people;
+  const now = Date.now();
+  jira.addIssue({ key: 'WEB-1', summary: 'Mentions', updated: now - DAY });
+  await tracker.addIssues('WEB-1');
+  await tracker.check();
+  const id = jira.comment('WEB-1', 'Please review', sam, now, [me]).comments[0].id;
+  await tracker.check();
+  const entry = tracker.find('WEB-1');
+  assert.equal(entry.changes[0].mentionsMe, true);
+  assert.equal(store.data.tracked[0].changes[0].mentions[0].accountId, me.accountId);
+  assert.deepEqual(notes.pop(), { title: 'WEB-1 changed', subtitle: 'Mentions', body: 'Sam Rivera mentioned you on WEB-1', key: 'WEB-1' });
+  assert.equal((await tracker.check()).found, 0);
+
+  // Same display text, another account: the edit is real, but does not address me.
+  jira.editComment('WEB-1', id, 'Please review', sam, now + 1000, [{ ...me, accountId: 'someone-else' }]);
+  await tracker.check();
+  assert.equal(entry.changes.at(-1).edited, true);
+  assert.ok(!entry.changes.at(-1).mentionsMe);
+  assert.match(notes.pop().body, /edited a comment/);
+  jira.editComment('WEB-1', id, 'Please review', sam, now + 2000, [me]);
+  await tracker.check();
+  assert.equal(entry.changes.at(-1).mentionsMe, true);
+  assert.equal(notes.pop().body, 'Sam Rivera mentioned you on WEB-1');
+
+  jira.comment('WEB-1', 'My own mention', me, now + 3000, [me]);
+  await tracker.check();
+  assert.deepEqual([entry.changes.at(-1).mentionsMe, entry.changes.at(-1).own, entry.changes.at(-1).processed], [true, true, true]);
+  assert.equal(notes.length, 0);
+  // A legacy record has no mention metadata and remains a safe text baseline.
+  delete entry.changes.at(-1).mentions;
+  assert.equal(tracker.commentTexts(entry).get(entry.changes.at(-1).id.slice(1)).text, 'My own mention @Demo User');
+});

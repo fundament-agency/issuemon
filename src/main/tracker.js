@@ -323,7 +323,8 @@ class Tracker extends EventEmitter {
       for (const c of found.sort((a, b) => a.at - b.at)) {
         if (known.has(c.id)) continue;
         const own = !!(this.settings.ignoreOwn && meId && c.author?.accountId === meId);
-        const rec = { ...c, processed: own, processedAt: own ? now : null, ...(own && { own: true }) };
+        const mentionsMe = c.field === 'comment' && !!meId && !!c.mentions?.some(m => m.accountId === meId);
+        const rec = { ...c, ...(mentionsMe && { mentionsMe: true }), processed: own, processedAt: own ? now : null, ...(own && { own: true }) };
         t.changes.push(rec);
         added.push(rec);
       }
@@ -355,12 +356,12 @@ class Tracker extends EventEmitter {
     return fresh;
   }
 
-  /** Comment id → the latest text IssueMon recorded for it (as a new comment or an edit): the old text of the next edit. */
+  /** Comment id → the latest text and mention ranges IssueMon recorded for it (as a new comment or an edit): the old text of the next edit. */
   commentTexts(t) {
     const texts = new Map();
     for (const c of [...t.changes].sort((a, b) => a.at - b.at)) {
       const id = commentIdOf(c);
-      if (id) texts.set(id, c.to ?? '');
+      if (id) texts.set(id, { text: c.to ?? '', mentions: c.mentions || [] });
     }
     return texts;
   }
@@ -411,7 +412,7 @@ class Tracker extends EventEmitter {
       this.notify({
         title: assignedToMe(last, me) ? this.t('notify.assignedToYou', { key: f.key }) : this.t('notify.changes', { key: f.key, n: f.changes.length }),
         subtitle: f.summary,
-        body: describe(last, { me, t: this.t }),
+        body: describe(last, { me, key: f.key, t: this.t }),
         key: f.key,
       });
     }

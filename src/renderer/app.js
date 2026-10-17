@@ -42,7 +42,7 @@
   const daysIdle = i => Math.floor((Date.now() - i.updated) / DAY);
   const idleCls = d => (d >= 30 ? 'hot' : d >= 21 ? 'warm' : '');
   const isMe = u => !!(u?.accountId && u.accountId === S.me?.accountId);
-  const toMe = c => assignedToMe(c, S.me?.name);
+  const toMe = c => assignedToMe(c, S.me?.name) || (c.field === 'comment' && c.mentionsMe);
   const staleIssue = key => S.stale.issues.find(i => i.key === key);
 
   /* ---------- small render helpers ---------- */
@@ -149,6 +149,8 @@
     const out = [];
     const comments = cs.filter(c => c.field === 'comment' && !c.edited).length;
     const edited = new Set(cs.filter(c => c.field === 'comment' && c.edited).map(c => String(c.id).split('@')[0])).size; // per comment, however often edited
+    const mention = cs.find(c => c.field === 'comment' && c.mentionsMe);
+    if (mention) out.push(`<span class="chip me">${esc(chip(mention, { t }).text)}</span>`);
     if (comments) out.push(`<span class="chip">${icon('msg')}${esc(t('row.comments', { n: comments }))}</span>`);
     if (edited) out.push(`<span class="chip">${icon('msg')}${esc(t('row.commentsEdited', { n: edited }))}</span>`);
     for (const c of [...cs].sort(byNewest)) {
@@ -159,6 +161,22 @@
       out.push(`<span class="chip ${mine ? 'me' : ''}">${esc(text)}</span>`);
     }
     return out.join('');
+  }
+
+  /** Only stored ranges from actual mention nodes can highlight text; escape every fragment, including the mention. */
+  function mentionHtml(text, mentions = [], offset = 0) {
+    let at = 0;
+    let html = '';
+    const ranges = (Array.isArray(mentions) ? mentions : []).filter(m =>
+      S.me?.accountId && m.accountId === S.me.accountId && Number.isInteger(m.start) && Number.isInteger(m.end) && m.start >= 0 && m.end > m.start,
+    ).sort((a, b) => a.start - b.start);
+    for (const m of ranges) {
+      const start = Math.max(0, m.start - offset), end = Math.min(text.length, m.end - offset);
+      if (start < at || start >= end) continue;
+      html += `${esc(text.slice(at, start))}<mark class="mention-me">${esc(text.slice(start, end))}</mark>`;
+      at = end;
+    }
+    return html + esc(text.slice(at));
   }
 
   const DIFF_KEEP = 12; // words of unchanged text you see on each side of a change
@@ -174,22 +192,33 @@
     return `${esc(words.slice(0, DIFF_KEEP).join(''))}${gap} ${esc(words.slice(-DIFF_KEEP).join(''))}`;
   }
   /** Description (and an edited comment whose old text is known): marked word by word; if nothing is shared, the old and new text one below the other; only whitespace changed gets a note. */
-  function descDiffHtml(from, to) {
+  function descDiffHtml(from, to, mentions = []) {
+    // A mention target can change while the visible text stays identical.
+    if (from === to) return `<blockquote>${mentionHtml(to || '', mentions)}</blockquote>`;
     const parts = wordDiff(from || '', to || '');
-    if (parts.length && parts.every(p => p.type === 'same' || !p.text.trim())) return `<p class="va-note muted">${esc(t('detail.diffWhitespace'))}</p>`;
+    if (parts.length && parts.every(p => p.type === 'same' || !p.text.trim())) return `<p class="va-note muted">${esc(t('detail.diffWhitespace'))}</p>${mentions.length ? `<blockquote>${mentionHtml(to || '', mentions)}</blockquote>` : ''}`;
     const empty = `(${t('change.empty')})`;
-    if (parts.every(p => p.type !== 'same')) return `<div class="diff"><del>${esc(from || empty)}</del><ins>${esc(to || empty)}</ins></div>`;
-    const html = parts.map((p, i) => (p.type === 'same' ? sameHtml(p.text, i === 0, i === parts.length - 1) : `<${p.type}>${esc(p.text)}</${p.type}>`));
+    if (parts.every(p => p.type !== 'same')) return `<div class="diff"><del>${esc(from || empty)}</del><ins>${mentionHtml(to || empty, mentions)}</ins></div>`;
+    let offset = 0;
+    const html = parts.map((p, i) => {
+      const text = p.type === 'del' ? esc(p.text) : mentionHtml(p.text, mentions, offset);
+      if (p.type !== 'del') offset += p.text.length;
+      return p.type === 'same'
+        ? (mentions.length ? text : sameHtml(p.text, i === 0, i === parts.length - 1))
+        : `<${p.type}>${text}</${p.type}>`;
+    });
     return `<div class="diff inline">${html.join('')}</div>`;
   }
   // A change's diff never changes, but chHtml runs on every render: memoize per change id (the last 100). Cleared on a language change.
   const diffMemo = new Map();
   function descDiffCached(c) {
-    if (!c.id) return descDiffHtml(c.from, c.to);
-    let html = diffMemo.get(c.id);
+    const mentions = c.field === 'comment' ? c.mentions || [] : [];
+    if (!c.id) return descDiffHtml(c.from, c.to, mentions);
+    const cacheKey = `${c.id}:${S.me?.accountId || ''}`;
+    let html = diffMemo.get(cacheKey);
     if (html === undefined) {
-      html = descDiffHtml(c.from, c.to);
-      diffMemo.set(c.id, html);
+      html = descDiffHtml(c.from, c.to, mentions);
+      diffMemo.set(cacheKey, html);
       if (diffMemo.size > 100) diffMemo.delete(diffMemo.keys().next().value);
     }
     return html;
@@ -202,9 +231,9 @@
     switch (c.field) {
       case 'gone': return [`<span class="err-text">${esc(t('change.gone'))}</span>`, ''];
       case 'comment':
-        if (!c.edited) return [t('change.timeline.comment', { who }), `<blockquote>${esc(c.to)}</blockquote>`];
+        if (!c.edited) return [t('change.timeline.comment', { who }), `<blockquote>${mentionHtml(c.to || '', c.mentions)}</blockquote>`];
         // An edit: word by word when IssueMon recorded the old text, else just the new text
-        return [t('change.timeline.commentEdited', { who }), c.from != null ? descDiffCached(c) : `<blockquote>${esc(c.to)}</blockquote>`];
+        return [t('change.timeline.commentEdited', { who }), c.from != null ? descDiffCached(c) : `<blockquote>${mentionHtml(c.to || '', c.mentions)}</blockquote>`];
       case 'description': return [t('change.timeline.description', { who }), descDiffCached(c)];
       case 'attachment': return [c.to
         ? t('change.timeline.attachmentAdded', { who, name: `<b>${esc(c.to)}</b>` })

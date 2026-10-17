@@ -31,6 +31,8 @@
   // One change in words
   'change.empty': 'leeg',
   'change.describe.assignedToYou': '{who} · Toegewezen aan jou',
+  'change.chip.mentionsYou': 'Vermeldt jou',
+  'change.describe.mentionedYou': '{who} heeft je vermeld op {key}',
   'change.describe.comment': '{who}: “{text}”',
   'change.describe.commentEdited': '{who} paste een reactie aan: “{text}”',
   'change.describe.description': '{who} paste de beschrijving aan',

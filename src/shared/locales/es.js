@@ -32,6 +32,8 @@
   // One change in words: {who} is a name, {to}/{from} a field value, {field} a field label
   'change.empty': 'vacío',
   'change.describe.assignedToYou': '{who} · Asignada a ti',
+  'change.chip.mentionsYou': 'Te menciona',
+  'change.describe.mentionedYou': '{who} te ha mencionado en {key}',
   'change.describe.comment': '{who}: «{text}»',
   'change.describe.commentEdited': '{who} editó un comentario: «{text}»',
   'change.describe.description': '{who} editó la descripción',
