@@ -4,6 +4,7 @@
 const { normalizeIssue, ISSUE_FIELDS } = require('./changes');
 const { defaultIssueType } = require('../shared/rules');
 const { createTranslator } = require('../shared/i18n');
+const { truncate } = require('../shared/text');
 
 const PAGE = 100;
 
@@ -43,7 +44,7 @@ async function errorDetail(res) {
     const body = JSON.parse(text);
     return [...(body.errorMessages || []), ...Object.values(body.errors || {})].join(' ');
   } catch {
-    return /<html/i.test(text) ? '' : text.replace(/\s+/g, ' ').trim().slice(0, 200);
+    return /<html/i.test(text) ? '' : truncate(text.replace(/\s+/g, ' ').trim(), 200);
   }
 }
 

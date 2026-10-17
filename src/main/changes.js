@@ -1,5 +1,6 @@
 'use strict';
 /* Pure functions: Jira responses → normalized issues and changes. No Electron, no network. */
+const { truncate } = require('../shared/text');
 
 /** Jira dates such as "2026-10-09T13:02:11.123+0200" → epoch ms (or null). */
 function parseJiraDate(value) {
@@ -56,7 +57,7 @@ function normalizeIssue(raw) {
     }),
     project: f.project?.name || null,
     projectKey: f.project?.key || null,
-    description: adfToText(f.description).slice(0, DESCRIPTION_MAX),
+    description: truncate(adfToText(f.description), DESCRIPTION_MAX),
   };
 }
 

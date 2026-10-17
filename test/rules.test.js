@@ -7,6 +7,13 @@ test('noteText: whitespace and newlines become one space, trimmed', () => {
   assert.equal(noteText('  one\n\n two\t three  '), 'one two three');
   assert.equal(noteText('\n  '), '');
   assert.equal(noteText(null), '');
+});
+
+test('noteText: cut off at NOTE_MAX between grapheme clusters', () => {
+  assert.equal(noteText('x'.repeat(300)).length, NOTE_MAX);
+  const cut = noteText(`${'x'.repeat(NOTE_MAX - 1)}👩‍💻`);
+  assert.equal(cut, 'x'.repeat(NOTE_MAX - 1)); // the whole emoji stays out, never half of it
+  assert.ok(cut.isWellFormed());
   assert.equal(noteText(undefined), '');
 });
 

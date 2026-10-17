@@ -16,6 +16,7 @@ const { createUpdateChecker, isReleaseUrl } = require('./updates');
 const { HIDDEN_FLAG, autostartFile, refreshAutostart, setAutostart } = require('./autostart');
 const { isKey } = require('../shared/keys');
 const { THEMES } = require('../shared/rules');
+const { truncate } = require('../shared/text');
 const { LANGUAGE_NAMES, LANGUAGE_SETTINGS, createTranslator, resolveLanguage, systemLocale } = require('../shared/i18n');
 
 const E2E = process.env.ISSUEMON_E2E === '1';
@@ -205,7 +206,7 @@ function restoreNotificationClicks() {
 /* ---------- tray icon, dock badge, menu ---------- */
 
 const TRAY_MAX = 10;
-const clip = (text, max) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text);
+const clip = (text, max) => (text.length > max ? `${truncate(text, max - 1).trimEnd()}…` : text);
 
 /** Context menu of the tray icon, with the changed issues (newest first, at most TRAY_MAX). */
 function trayMenuTemplate() {

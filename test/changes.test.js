@@ -65,6 +65,8 @@ test('normalizeIssue converts an ADF description to text and truncates at 2000 c
   const adf = text => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [{ type: 'text', text }] }] });
   assert.equal(normalizeIssue({ id: 1, key: 'WEB-1', fields: { description: adf('First line') } }).description, 'First line');
   assert.equal(normalizeIssue({ id: 1, key: 'WEB-1', fields: { description: adf('x'.repeat(2500)) } }).description.length, 2000);
+  const cut = normalizeIssue({ id: 1, key: 'WEB-1', fields: { description: adf(`${'x'.repeat(1999)}🚀`) } }).description;
+  assert.equal(cut, 'x'.repeat(1999)); // an emoji at the cut stays out whole
   assert.equal(normalizeIssue({ id: 1, key: 'WEB-1', fields: {} }).description, '');
   assert.equal(normalizeIssue({ id: 1, key: 'WEB-1', fields: { description: null } }).description, '');
 });

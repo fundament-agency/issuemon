@@ -10,6 +10,7 @@
   const { parseKeys } = window.IssuemonKeys;
   const { wordDiff } = window.IssuemonDiff;
   const { UNASSIGNED, compute, settle, neighbour, pending, isChanged, isDone, fold, sortPeople } = window.IssuemonInbox;
+  const { initials } = window.IssuemonText;
   const { clip, firstName, assignedToMe, fieldInSentence, shortLine, chip } = window.IssuemonChange;
   const { NOTE_MAX, INTERVALS, THEMES, noteText, projectKey, notesProjectOf, isConfigured, defaultIssueType } = window.IssuemonRules;
   const { LANGUAGES, LANGUAGE_NAMES, LANGUAGE_SETTINGS, createTranslator, resolveLanguage } = window.IssuemonI18n;
@@ -126,8 +127,7 @@
   function avatar(u, cls = '', nobody = 'person.unassigned') {
     const name = u?.name;
     if (!name) return `<span class="avatar none ${cls}" title="${esc(t(u == null ? nobody : 'person.unknown'))}">–</span>`;
-    const p = name.trim().split(/\s+/);
-    const ini = (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
+    const ini = initials(name);
     return `<span class="avatar ${isMe(u) ? 'me' : ''} ${cls}" style="--h:${hue(name)}" title="${esc(name)}">${esc(ini)}</span>`;
   }
   /** The author of a change: none (a change found by comparing snapshots) is "Someone", not "Unassigned". */
