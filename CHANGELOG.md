@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Texts that IssueMon shortens (chips, the short line of a row, notifications, the timeline, the menu bar list, notes and long descriptions) are cut between characters as you see them, so an emoji, a combined emoji such as 👩‍💻 or a flag at the cut is no longer split in half. An avatar skips a name part without a letter, such as a status emoji, so "🌴 Sam Rivera" is *SR*; a name without any letter shows its first character whole (#46).
+
 ## [0.3.0] - 2026-10-17
 
 ### Added

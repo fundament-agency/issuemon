@@ -143,7 +143,7 @@ src/
   preload/   preload.js: the only bridge to the page (window.issuemon)
   renderer/  index.html, app.js, base.css, app.css: the interface ("Inbox" layout) · actions.js: optimistic updates and
              Undo, without DOM · reveal.js: completes a row's smooth scroll across renders
-  shared/    keys.js: recognising issue keys · diff.js: word-level diff · inbox.js: the Changed, Tracked/Done and Stale lists,
+  shared/    keys.js: recognising issue keys · diff.js: word-level diff · text.js: shortening text between grapheme clusters, and initials · inbox.js: the Changed, Tracked/Done and Stale lists,
              counts and selection · change.js: a change in words (labels, "assigned to you", notification and chip text) ·
              rules.js: note and project rules, intervals, themes, connected check, default issue type ·
              i18n.js: languages, the system-language fallback and the translator t(key, params) with plurals ·

@@ -34,6 +34,20 @@ test('clip truncates with an ellipsis', () => {
   assert.equal(clip('12345678901', 10), '123456789…');
 });
 
+test('clip never leaves a lone surrogate or half a cluster: emoji, combined emoji and flag at the cut', () => {
+  assert.equal(clip('Released 🚀🚀🚀', 11), 'Released …');
+  for (const cluster of ['🚀', '👩‍💻', '🇳🇱']) {
+    const text = `Released ${cluster}${cluster}${cluster}`;
+    for (let n = 1; n <= text.length; n++) {
+      const out = clip(text, n);
+      assert.ok(out.isWellFormed(), `lone surrogate at ${n}: ${JSON.stringify(out)}`);
+      const kept = out.replace(/…$/, '');
+      const tail = kept.slice('Released '.length);
+      assert.equal(tail.replaceAll(cluster, ''), '', `half a cluster at ${n}: ${JSON.stringify(out)}`);
+    }
+  }
+});
+
 test('sameName: trimmed and case-insensitive; empty values are never equal', () => {
   assert.equal(sameName('Demo User', 'demo user'), true);
   assert.equal(sameName('  Demo User ', 'DEMO USER'), true);
