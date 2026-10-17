@@ -7,8 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { _electron: electron } = require('playwright-core');
 const { createMockJira } = require('../test/support/mock-jira');
-
-const ROOT = path.join(__dirname, '..');
+const { launchOptions } = require('./launch');
 
 test('Notes: edits survive renderer refreshes until saved or discarded', { timeout: 30_000 }, async t => {
   const jira = createMockJira({ email: 'e2e@example.com', token: 'e2e-token' });
@@ -28,8 +27,7 @@ test('Notes: edits survive renderer refreshes until saved or discarded', { timeo
   });
   const env = { ...process.env, ISSUEMON_E2E: '1', ISSUEMON_USER_DATA: userData, ISSUEMON_HOME: dataDir, ISSUEMON_TOKEN: 'e2e-token' };
   delete env.ELECTRON_RUN_AS_NODE;
-  const packaged = process.env.ISSUEMON_APP ? path.resolve(ROOT, process.env.ISSUEMON_APP) : null;
-  app = await electron.launch({ executablePath: packaged || require('electron'), args: packaged ? [] : [ROOT], env });
+  app = await electron.launch(launchOptions(env));
   const page = await app.firstWindow();
   await page.click('[data-view="notes"]');
   const field = page.locator('#note-cookie');

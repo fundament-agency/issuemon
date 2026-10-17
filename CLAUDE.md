@@ -14,6 +14,7 @@ Electron app that tracks Jira issues and reports changes. Behaviour, shortcuts, 
 - Unit and e2e tests run against the mock Jira in `test/support/mock-jira.js`; a new Jira field or endpoint goes in there too.
 - The e2e test writes screenshots to `e2e/screenshots/`; view them with Read to see the interface without launching the app yourself.
 - When a sub-test in `e2e/app.e2e.js` fails, Electron stays open until the 180 s timeout; allow for that in your command's timeout.
+- On Linux, run the e2e tests in a virtual display: `xvfb-run -a npm run test:e2e` (package `xvfb`). On the desktop itself, a blanked screen throttles Electron to about one frame a second and sub-tests time out.
 
 ## Launching Electron from a shell inside another Electron app
 

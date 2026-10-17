@@ -33,6 +33,7 @@ npm run fuzz      # property-based fuzzer, random seeded inputs (not part of npm
 - Unit and e2e tests run against the mock Jira in `test/support/mock-jira.js`. A new Jira field or endpoint goes in there too.
 - The e2e test writes screenshots to `e2e/screenshots/`. Open them to see the interface without launching the app yourself.
 - A full e2e run takes one to two minutes. A sub-test that gets stuck ends at the 180 s timeout, so allow for that in any command timeout.
+- On Linux, run the e2e tests in a virtual display: `xvfb-run -a npm run test:e2e` (on Debian or Ubuntu, `sudo apt install xvfb` first). The tests start Electron on X11 (`e2e/launch.js`), because under native Wayland Playwright's element screenshots hang. On the desktop itself, a blanked screen slows Electron down to about one frame a second until sub-tests time out.
 - A few e2e sub-tests are occasionally flaky. If one fails, run the suite once more before you start investigating.
 
 ## Conventions
