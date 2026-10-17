@@ -139,6 +139,17 @@ test('Jira client against the mock Jira', async t => {
     }
   });
 
+  await t.test('the second page of a long history without its list is unreadable too', async () => {
+    jira.addIssue({ key: 'WEB-3', summary: 'Druk' });
+    for (let n = 0; n < 130; n++) jira.comment('WEB-3', `c${n}`, jira.people.alex, 1_000 + n);
+    const noSecondList = createJiraClient({
+      baseUrl: jira.url, email: 'user@example.com', token: 'tok',
+      fetch: (u, init) => (new URL(u).searchParams.get('startAt') === '30' ? Promise.resolve(new Response('{"total":130}', { status: 200 })) : fetch(u, init)),
+    });
+    await assert.rejects(noSecondList.comments('WEB-3'), err => err.name === 'JiraError' && !err.code && !err.status && err.message.includes('comment'));
+    assert.equal((await client.comments('WEB-3')).length, 100);
+  });
+
   await t.test('comments', async () => {
     jira.comment('WEB-1', 'Hallo');
     const comments = await client.comments('WEB-1');

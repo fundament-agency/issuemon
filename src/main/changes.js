@@ -80,17 +80,20 @@ const FIELD_MAP = {
 /* Noise nobody wants to see: backlog order and time tracking. */
 const IGNORED_FIELDS = new Set(['Rank', 'WorklogId', 'timespent', 'timeestimate', 'timeoriginalestimate', 'WorklogTimeSpent', 'Worklog Id']);
 
+const isObject = v => v != null && typeof v === 'object';
+
 /**
  * Changelog histories → changes, only after `since` (exclusive).
  * @returns {Array<{id,at,author,field,label,from,to}>}
  */
 function changesFromChangelog(histories, since) {
   const out = [];
-  for (const h of histories || []) {
+  for (const h of Array.isArray(histories) ? histories : []) {
+    if (!isObject(h)) continue; // a malformed entry is skipped, never a reason to lose the rest
     const at = parseJiraDate(h.created);
     if (at == null || (since != null && at <= since)) continue;
-    (h.items || []).forEach((item, idx) => {
-      if (IGNORED_FIELDS.has(item.field)) return;
+    (Array.isArray(h.items) ? h.items : []).forEach((item, idx) => {
+      if (!isObject(item) || IGNORED_FIELDS.has(item.field)) return;
       out.push({
         id: `h${h.id}-${idx}`,
         at,
@@ -114,7 +117,8 @@ function changesFromChangelog(histories, since) {
  */
 function changesFromComments(comments, since, previous = new Map()) {
   const out = [];
-  for (const c of comments || []) {
+  for (const c of Array.isArray(comments) ? comments : []) {
+    if (!isObject(c)) continue;
     const at = parseJiraDate(c.created);
     if (at == null) continue;
     const { text: to, mentions } = adfContent(c.body);
