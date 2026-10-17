@@ -58,3 +58,45 @@ jobs:
         with:
           name: e2e-screenshots-built-app
           path: e2e/screenshots/
+
+  # Linux runs without a desktop: the e2e tests get a virtual display from xvfb-run (see CONTRIBUTING.md).
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: xvfb-run -a npm run test:e2e || xvfb-run -a npm run test:e2e
+      - name: Upload e2e screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-screenshots-linux
+          path: e2e/screenshots/
+
+  # The AppImage people download, as built for a release (package.json, scripts/after-pack.js), started as a user would.
+  built-app-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npx --no install-electron
+      - run: npx electron-builder --linux --publish never
+      - run: |
+          export ISSUEMON_APP="dist/issuemon-$(node -p "require('./package.json').version")-linux-x86_64.AppImage"
+          xvfb-run -a npm run test:e2e || xvfb-run -a npm run test:e2e
+      - name: Upload e2e screenshots
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-screenshots-built-app-linux
+          path: e2e/screenshots/
+

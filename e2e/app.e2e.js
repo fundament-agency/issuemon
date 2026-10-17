@@ -382,6 +382,11 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await page.waitForSelector('.help');
     assert.match(await page.textContent('.help'), /Shortcuts/);
     assert.match(await page.textContent('.help'), /Open in Jira/);
+    // The modifier keys as the platform writes them: ⌘ and ⌥ on macOS, Ctrl and Alt elsewhere
+    const [mod, alt] = process.platform === 'darwin' ? ['⌘', '⌥'] : ['Ctrl+', 'Alt+'];
+    const keys = await page.locator('.help kbd').allTextContents();
+    for (const key of [`${mod}K`, `${mod}R`, `${mod}Z`, `${alt}↑`]) assert.ok(keys.includes(key), `${key} in ${keys.join(' ')}`);
+    assert.equal(await page.getAttribute('.va-sync [data-action="check"]', 'title'), `Check now (${mod}R)`);
     await page.keyboard.press('Escape');
     await page.waitForSelector('.help', { state: 'detached' });
     await page.click('[data-action="help"]');
@@ -1018,13 +1023,14 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     assert.equal(await status(), ''); // not checked yet: automatic checks do not run in the tests
     assert.equal(await page.locator('text=brew upgrade').count(), 0);
 
-    // A newer release: toast with two actions, the status line and the Homebrew hint
+    // A newer release: toast with two actions, the status line and, on macOS, the Homebrew hint
     jira.release = '9.9.9';
     await page.click('[data-action="check-updates"]');
     await page.waitForSelector('.snack:has-text("IssueMon 9.9.9 is available")');
     assert.deepEqual(await page.locator('.snack button').allTextContents(), ['View release', 'Later']);
     await until(async () => (await status()) === 'IssueMon 9.9.9 is available · View release', 'status line with the new version');
-    assert.match(await page.textContent('.set'), /Homebrew: brew upgrade --cask issuemon/);
+    if (process.platform === 'darwin') assert.match(await page.textContent('.set'), /Homebrew: brew upgrade --cask issuemon/);
+    else assert.doesNotMatch(await page.textContent('.set'), /Homebrew/); // the cask is macOS only
     await page.locator('fieldset:has(#set-checkUpdates)').screenshot({ path: path.join(SHOTS, '17-about-update.png') });
 
     // View release (toast): the release page opens in the browser, and only that kind of page can

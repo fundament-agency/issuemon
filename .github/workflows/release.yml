@@ -1,8 +1,9 @@
 # Release flow: push a tag `vX.Y.Z` that matches the version in package.json.
-# This workflow runs the unit tests, builds the macOS assets (arm64 and x64, a dmg
-# and a tar.xz for Homebrew), verifies the code signatures and the archives, runs
-# the e2e tests against the built arm64 app and only then uploads the assets to a
-# DRAFT GitHub release. Nothing is public yet.
+# The linux job builds the Linux AppImage (x64) and runs the e2e tests against it.
+# The release job then runs the unit tests, builds the macOS assets (arm64 and x64,
+# a dmg and a tar.xz for Homebrew), verifies the code signatures and the archives,
+# runs the e2e tests against the built arm64 app and only then uploads the macOS
+# assets and the AppImage to a DRAFT GitHub release. Nothing is public yet.
 # Review the draft, then publish it by hand on GitHub. Publishing triggers
 # update-cask.yml, which updates the Homebrew cask.
 name: Release
@@ -15,7 +16,46 @@ permissions:
   contents: write
 
 jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check that the tag matches package.json
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if [ "${GITHUB_REF_NAME#v}" != "$VERSION" ]; then
+            echo "Tag $GITHUB_REF_NAME does not match package.json version $VERSION" >&2
+            exit 1
+          fi
+
+      - run: npm test
+
+      - run: npx --no install-electron
+
+      - name: Build
+        run: npx electron-builder --linux --publish never
+
+      # No desktop on the runner: xvfb-run gives the e2e tests a virtual display. One retry, as on macOS.
+      - name: Test the AppImage
+        run: |
+          export ISSUEMON_APP="dist/issuemon-${GITHUB_REF_NAME#v}-linux-x86_64.AppImage"
+          xvfb-run -a npm run test:e2e || xvfb-run -a npm run test:e2e
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: issuemon-linux
+          path: dist/*.AppImage
+
   release:
+    needs: linux
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
@@ -58,10 +98,15 @@ jobs:
         env:
           ISSUEMON_APP: dist/mac-arm64/IssueMon.app/Contents/MacOS/IssueMon
 
+      - uses: actions/download-artifact@v7
+        with:
+          name: issuemon-linux
+          path: dist
+
       - name: Create the draft release
         run: |
           gh release create "$GITHUB_REF_NAME" --draft --title "$GITHUB_REF_NAME" --notes "See CHANGELOG.md" \
-            dist/*.dmg dist/*.tar.xz
+            dist/*.dmg dist/*.tar.xz dist/*.AppImage
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -73,3 +118,4 @@ jobs:
           path: |
             dist/*.dmg
             dist/*.tar.xz
+            dist/*.AppImage

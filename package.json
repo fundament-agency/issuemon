@@ -85,6 +85,32 @@
     "dmg": {
       "writeUpdateInfo": false
     },
+    "linux": {
+      "category": "Development",
+      "icon": "build/icon.png",
+      "synopsis": "Keep an eye on Jira issues",
+      "electronLanguages": [
+        "en-US",
+        "en-GB",
+        "nl",
+        "fr",
+        "de",
+        "es",
+        "es-419"
+      ],
+      "artifactName": "${name}-${version}-linux-${arch}.${ext}",
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "toolsets": {
+      "appimage": "1.0.3"
+    },
     "publish": [
       {
         "provider": "github",

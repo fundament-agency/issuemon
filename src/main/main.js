@@ -13,12 +13,14 @@ const { Tracker } = require('./tracker');
 const { CHANNELS } = require('./ipc');
 const { createSecrets } = require('./secrets');
 const { createUpdateChecker, isReleaseUrl } = require('./updates');
+const { HIDDEN_FLAG, autostartFile, refreshAutostart, setAutostart } = require('./autostart');
 const { isKey } = require('../shared/keys');
 const { THEMES } = require('../shared/rules');
 const { LANGUAGE_NAMES, LANGUAGE_SETTINGS, createTranslator, resolveLanguage, systemLocale } = require('../shared/i18n');
 
 const E2E = process.env.ISSUEMON_E2E === '1';
 const IS_MAC = process.platform === 'darwin';
+const IS_LINUX = process.platform === 'linux';
 const ASSETS = path.join(__dirname, '..', 'assets');
 const TOKEN_PAGE = 'https://id.atlassian.com/manage-profile/security/api-tokens';
 const NOTIFICATION_SETTINGS = 'x-apple.systempreferences:com.apple.Notifications-Settings.extension';
@@ -27,6 +29,8 @@ if (process.env.ISSUEMON_USER_DATA) app.setPath('userData', process.env.ISSUEMON
 // Without this switch Chromium asks for the keychain item "IssueMon Safe Storage" as soon as it encrypts cookies.
 // With a fixed key in the process, Chromium never touches the macOS keychain.
 app.commandLine.appendSwitch('use-mock-keychain');
+// Linux: the same for GNOME Keyring and KWallet, which would otherwise ask to be unlocked for it.
+if (IS_LINUX) app.commandLine.appendSwitch('password-store', 'basic');
 app.setAboutPanelOptions({ applicationName: 'IssueMon', copyright: 'Copyright © 2026 Fundament' });
 
 let win = null;
@@ -392,6 +396,30 @@ async function openExternal(url) {
   return true;
 }
 
+/* ---------- start at login (built app only) ---------- */
+
+// Linux: the autostart entry and the executable it starts. The AppImage runtime sets APPIMAGE and mounts the app at
+// APPDIR; APPIMAGE alone can be inherited from another AppImage that started this process.
+const linuxAutostart = () => ({
+  file: autostartFile({ env: process.env, homedir: os.homedir() }),
+  exec: process.env.APPIMAGE && process.env.APPDIR && process.execPath.startsWith(process.env.APPDIR) ? process.env.APPIMAGE : process.execPath,
+});
+
+/** macOS: a login item. Linux: an XDG autostart entry (autostart.js). The e2e tests leave the developer's own alone. */
+function applyOpenAtLogin(on) {
+  if (!app.isPackaged || E2E) return;
+  if (IS_MAC) app.setLoginItemSettings({ openAtLogin: on, openAsHidden: true });
+  if (!IS_LINUX) return;
+  try {
+    setAutostart({ on, ...linuxAutostart() });
+  } catch (err) {
+    console.warn(`Start at login: ${err.message}`);
+  }
+}
+
+/** Started at login: show only the tray icon, not the window. */
+const openedAtLogin = () => (IS_MAC ? app.getLoginItemSettings().wasOpenedAtLogin : process.argv.includes(HIDDEN_FLAG));
+
 /* ---------- startup ---------- */
 
 if (!app.requestSingleInstanceLock()) {
@@ -454,7 +482,7 @@ if (!app.requestSingleInstanceLock()) {
         updateBadges(); // tooltip and tray menu
       }
       if (changed.includes('checkUpdates')) updates.start(); // switched on: a check is due again as soon as it was last made more than a day ago
-      if (changed.includes('openAtLogin') && app.isPackaged) app.setLoginItemSettings({ openAtLogin: next.openAtLogin, openAsHidden: true });
+      if (changed.includes('openAtLogin')) applyOpenAtLogin(next.openAtLogin);
     });
 
     applyTheme(tracker.settings.theme);
@@ -462,8 +490,10 @@ if (!app.requestSingleInstanceLock()) {
     registerIpc();
     createMenu();
     createTray();
-    const hidden = IS_MAC && app.getLoginItemSettings().wasOpenedAtLogin;
-    createWindow({ show: !hidden });
+    if (IS_LINUX && app.isPackaged && !E2E) { // the AppImage may have moved since the entry was written
+      try { refreshAutostart(linuxAutostart()); } catch (err) { console.warn(`Start at login: ${err.message}`); }
+    }
+    createWindow({ show: !openedAtLogin() });
     updateBadges();
     tracker.start();
     updates.start();
