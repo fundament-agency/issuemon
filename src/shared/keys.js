@@ -7,41 +7,48 @@
 
   const KEY_RE = /\b([A-Za-z][A-Za-z0-9_]{1,9})-(\d{1,7})\b/g;
   const NUMBER_RE = /^#?(\d{1,7})$/;
-  const WHOLE_KEY_RE = /^([A-Za-z][A-Za-z0-9_]{1,9})-(\d{1,7})$/;
-  // The start of a link inside a token: a scheme, or a host name with a dot followed by a path.
-  const LINK_RE = /[a-z][a-z0-9+.-]*:\/\/|(?<![\w.-])[a-z0-9-]+(?:\.[a-z0-9-]+)+\//i;
-  // Punctuation that may follow a link in running text, such as "(see https://…/WEB-1)."
-  const TRAILING_RE = /[)\]>.:;!'"]+$/;
+  // A key at the start of a string, not followed by more key characters: "WEB-1" in "WEB-1**" or "WEB-1|WEB-1>", but
+  // not in "WEB-12-login" or "WEB-12345678".
+  const START_KEY_RE = /^([A-Za-z][A-Za-z0-9_]{1,9})-(\d{1,7})(?![A-Za-z0-9_-])/;
+  // The start of a link inside a piece of text: a scheme, or a host name with a letters-only top-level domain
+  // followed by a path ("acme.atlassian.net/browse/…", not "ABC-1.ABC-2/x").
+  const LINK_RE = /[a-z][a-z0-9+.-]*:\/\/|(?<![\w.-])[a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,}\//i;
+  // Characters that cannot be part of a link and mark where one ends: Slack's <url|label>, quotes, backticks, braces.
+  const LINK_END_RE = /[|<>"'`\u2018\u2019\u201c\u201d\u00ab\u00bb{}\\^]/;
 
   const decode = s => {
     try { return decodeURIComponent(s); } catch { return s; }
   };
   const keyOf = m => `${m[1].toUpperCase()}-${m[2]}`;
-  const wholeKey = s => decode(s).replace(TRAILING_RE, '').match(WHOLE_KEY_RE);
+  const startKey = s => decode(s).match(START_KEY_RE);
 
   /**
-   * The keys of one token. In a link only the key at the end of the path (/browse/ABC-1, …/issues/ABC-1,
-   * …/queues/custom/1/ABC-1) and the value of selectedIssue count: never the host name (acme-sandbox-952), other
-   * parameters (jql, focusedCommentId, page) or the fragment (#comment-10234). Text before the link is plain text.
+   * The keys of one piece of a token that holds at most one link. In a link only the key at the end of the path
+   * (/browse/ABC-1, …/issues/ABC-1, …/queues/custom/1/ABC-1) and the value of selectedIssue count: never the host
+   * name (acme-sandbox-952), other parameters (jql, focusedCommentId, page) or the fragment (#comment-10234).
+   * Text before the link is plain text. Whatever follows the key, such as "**", ")。" or "%20", is ignored.
    */
-  function keysOfToken(token) {
-    const link = LINK_RE.exec(token);
-    if (!link) return [...token.matchAll(KEY_RE)].map(keyOf);
-    const out = [...token.slice(0, link.index).matchAll(KEY_RE)].map(keyOf);
-    const rest = token.slice(link.index + link[0].length);
+  function keysOfPiece(piece) {
+    const link = LINK_RE.exec(piece);
+    if (!link) return [...piece.matchAll(KEY_RE)].map(keyOf);
+    const out = [...piece.slice(0, link.index).matchAll(KEY_RE)].map(keyOf);
+    const rest = piece.slice(link.index + link[0].length);
     // After a scheme the host comes first; a host-form match already ended on the slash after the host.
-    const afterHost = link[0].endsWith('//') ? rest.slice(rest.indexOf('/') < 0 ? rest.length : rest.indexOf('/')) : `/${rest}`;
+    const afterHost = link[0].endsWith('//') ? rest.slice(rest.search(/[/?#]|$/)) : `/${rest}`;
     const [path, ...query] = afterHost.split('#')[0].split('?');
-    const fromPath = wholeKey(path.split('/').filter(Boolean).pop() || '');
+    const fromPath = startKey(path.split('/').filter(Boolean).pop() || '');
     if (fromPath) out.push(keyOf(fromPath));
     for (const param of query.join('?').split('&')) {
       const eq = param.indexOf('=');
       if (eq < 0 || decode(param.slice(0, eq)).toLowerCase() !== 'selectedissue') continue;
-      const m = wholeKey(param.slice(eq + 1));
+      const m = startKey(param.slice(eq + 1));
       if (m) out.push(keyOf(m));
     }
     return out;
   }
+
+  /** The keys of one token: its pieces between link-ending characters, so "url1|url2" gives both links. */
+  const keysOfToken = token => token.split(LINK_END_RE).flatMap(keysOfPiece);
 
   /**
    * Supports /browse/ABC-1, ?selectedIssue=ABC-1 (in a link only the key at the end of the path and selectedIssue

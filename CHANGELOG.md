@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Pasting a Jira link no longer adds a bogus issue key: a sandbox or numbered site name (`acme-sandbox-952.atlassian.net` gave `SANDBOX-952`) and a comment link (`#comment-10234` gave `COMMENT-10234`) are ignored. In a link only the key at the end of the path and `selectedIssue` count, not the host, other parameters such as `jql`, or the fragment (#45).
+
 ## [0.3.0] - 2026-10-17
 
 ### Added

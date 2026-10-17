@@ -77,6 +77,29 @@ test('a pasted list of links and plain keys gives all keys in order', () => {
   assert.deepEqual(parseKeys(text, 'DEF'), ['APP-1', 'WEB-12', 'OPS-3', 'OPS-4', 'DEF-7']);
 });
 
+test('a link wrapped in markup, quotes or punctuation still yields its key', () => {
+  const url = 'https://x.atlassian.net/browse/WEB-1';
+  const wrapped = [
+    `**${url}**`, `\`${url}\``, `“${url}”`, `«${url}»`, `${url}}`, `${url})。`, `${url}%20`,
+    `<${url}|WEB-1>`, `[WEB-1](${url})`, `(${url}).`, `'${url}'`, `${url}>`, `${url}.`,
+  ];
+  for (const text of wrapped) assert.deepEqual(parseKeys(text), ['WEB-1'], text);
+});
+
+test('only a whole key at the end of the path counts', () => {
+  assert.deepEqual(parseKeys('https://x.atlassian.net/browse/WEB-12-login'), []);
+  assert.deepEqual(parseKeys('https://x.atlassian.net/browse/WEB-12345678'), []);
+});
+
+test('several links in one token give all their keys', () => {
+  assert.deepEqual(parseKeys('https://a.atlassian.net/browse/WEB-1|https://b-sandbox-952.atlassian.net/browse/APP-2'), ['WEB-1', 'APP-2']);
+  assert.deepEqual(parseKeys('<https://a.atlassian.net/browse/WEB-1><https://a.atlassian.net/browse/WEB-3>'), ['WEB-1', 'WEB-3']);
+});
+
+test('text that only looks like a host and a path is not a link', () => {
+  assert.deepEqual(parseKeys('ABC-1.ABC-2/x'), ['ABC-1', 'ABC-2']);
+});
+
 test('isKey validates strictly', () => {
   assert.equal(isKey('WEB-1423'), true);
   assert.equal(isKey('web-1423'), false);
