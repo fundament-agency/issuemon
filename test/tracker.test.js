@@ -1859,14 +1859,108 @@ test('Undo of Stop tracking cannot bring an issue of another site back', async t
   assert.equal(tracker.restore('WEB-1'), false);
 });
 
-test('tracking from a Stale list that belongs to the previous site asks the new site instead', async t => {
-  const { other, tracker, switchTo } = await setupTwoSites(t);
+test('the Stale list of the previous site goes with the switch, and Track cannot use it', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
   await tracker.check();
   assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['WEB-1']);
+  const staleA = JSON.parse(JSON.stringify(tracker.data.stale));
   switchTo(other);
-  const r = await tracker.track('WEB-1');
+  assert.deepEqual(tracker.data.stale, { issues: [], fetchedAt: null, error: null, site: new URL(other.url).host });
+  const r = await tracker.track('WEB-1'); // not in the (empty) list: asked of the new site, which does not know it
   assert.deepEqual(r.added, []);
   assert.deepEqual(tracker.data.tracked, []);
+  // A list that does belong to another site is refused, however it got there.
+  tracker.data.stale = staleA;
+  const refused = await tracker.track('WEB-1');
+  assert.deepEqual(refused, { ok: false, error: 'The Jira site changed while this was running.' });
+  assert.deepEqual(tracker.data.tracked, []);
+  switchTo(jira);
+  assert.deepEqual(tracker.data.stale.issues, []);
+});
+
+test('a failed Stale refresh on the new site never keeps issues of the previous one', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  await tracker.check();
+  switchTo(other);
+  tracker.data.stale = { ...tracker.data.stale, issues: [{ key: 'WEB-1', id: '10001' }], site: new URL(jira.url).host }; // as a list fetched before the switch
+  tracker.getClient = () => ({ search: async () => { throw Object.assign(new Error('Bad query'), { status: 400 }); } });
+  await tracker.refreshStale(tracker.getClient());
+  assert.deepEqual(tracker.data.stale.issues, []);
+  assert.equal(tracker.data.stale.error, 'Bad query');
+  assert.equal(tracker.data.stale.site, new URL(other.url).host);
+});
+
+test('Undo of Processed cannot reach a change of another site, also after switching back', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  jira.comment('WEB-1', 'News', jira.people.alex, Date.now());
+  await tracker.check();
+  const ids = tracker.markProcessed(['WEB-1']);
+  assert.equal(ids.length, 1);
+  switchTo(other);
+  switchTo(jira);
+  assert.equal(tracker.find('WEB-1').changes[0].processed, true);
+  tracker.unmark(ids);
+  assert.equal(tracker.find('WEB-1').changes[0].processed, true);
+  const again = tracker.markProcessed(['WEB-1']); // nothing pending: nothing to undo either
+  assert.deepEqual(again, []);
+});
+
+test('the site of the stored list is the configured host, whatever the file says', async t => {
+  const { jira, tracker, store } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  const host = new URL(jira.url).host;
+  const edited = { ...JSON.parse(JSON.stringify(store.data)), site: 'unrelated.example' };
+  assert.equal(ensureShape(JSON.parse(JSON.stringify(edited))).site, host);
+  store.data = ensureShape(edited);
+  const gen = tracker.credentialsGen;
+  const entry = tracker.find('WEB-1');
+  tracker.saveSettings({ theme: 'dark' }); // an unrelated save must not swap the list
+  assert.equal(tracker.find('WEB-1'), entry);
+  assert.equal(tracker.credentialsGen, gen);
+  assert.deepEqual(tracker.data.sites, []);
+});
+
+test('storage from before: the Stale list is from the configured host, and a list of another site is dropped', () => {
+  const old = { version: 4, settings: { baseUrl: 'https://one.example' }, stale: { issues: [{ key: 'A-1' }], fetchedAt: 5, error: null } };
+  const d = ensureShape(old);
+  assert.equal(d.stale.site, 'one.example');
+  assert.deepEqual(d.stale.issues.map(i => i.key), ['A-1']);
+  const foreign = ensureShape({ version: 5, settings: { baseUrl: 'https://one.example' }, site: 'one.example', stale: { issues: [{ key: 'B-1' }], fetchedAt: 5, error: 'x', warning: 'w', truncated: true, site: 'two.example' } });
+  assert.deepEqual(foreign.stale, { issues: [], fetchedAt: null, error: null, site: 'one.example' });
+});
+
+test('the saved lists of other sites carry no mention flags of the current account', () => {
+  const comment = { id: 'c1', field: 'comment', at: 1, mentions: [{ accountId: 'me' }], mentionsMe: true, processed: false };
+  const entry = () => ({ key: 'A-1', changes: [{ ...comment }] });
+  const d = ensureShape({ version: 5, settings: { baseUrl: 'https://one.example' }, me: { accountId: 'me' }, tracked: [entry()], sites: [{ host: 'two.example', tracked: [entry()] }] });
+  assert.equal(d.tracked[0].changes[0].mentionsMe, true);
+  assert.equal('mentionsMe' in d.sites[0].tracked[0].changes[0], false);
+});
+
+test('the first site entered adopts the list held while no URL was set; a later site starts empty', async t => {
+  const { jira, other, tracker, store } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  store.data = ensureShape({ ...JSON.parse(JSON.stringify(store.data)), settings: { ...store.data.settings, baseUrl: '' } }); // refused URL in old storage: tracked issues, no URL
+  assert.equal(store.data.site, '');
+  assert.equal(tracker.data.tracked.length, 1);
+  tracker.saveSettings({ baseUrl: jira.url, token: 'tok' });
+  assert.deepEqual(tracker.data.tracked.map(x => x.key), ['WEB-1']);
+  assert.deepEqual(tracker.data.sites, []);
+  tracker.saveSettings({ baseUrl: other.url, token: 'tok' });
+  assert.deepEqual(tracker.data.tracked, []);
+  assert.deepEqual(tracker.data.sites.map(s => s.host), [new URL(jira.url).host]);
+});
+
+test('issue types asked of the previous site are dropped, not remembered for the new one', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  other.addIssue({ key: 'WEB-9', summary: 'Site B' });
+  const asking = tracker.issueTypes('WEB');
+  switchTo(other);
+  assert.deepEqual(await asking, { ok: false, error: 'The Jira site changed while this was running.' });
+  assert.equal(tracker.typeCache.size, 0);
+  assert.equal((await tracker.issueTypes('WEB')).ok, true);
+  assert.equal(tracker.typeCache.size, 1);
 });
 
 test('an Activity answer from the previous site is neither cached nor shown for the new one', async t => {

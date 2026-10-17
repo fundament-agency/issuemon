@@ -17,12 +17,14 @@ const MIN = 60_000;
 const HOUR = 60 * MIN;
 const HISTORY_LIMIT = 60; // processed changes we keep per issue
 const PARALLEL = 4;
+const MARKED_MAX = 10_000; // change ids that Undo of Processed can still reach
 const CACHE_MAX = 200; // items per cache (activity, issue types)
 /** Retry delays after consecutive transient errors; never longer than the configured interval. */
 const BACKOFF = [30_000, MIN, 2 * MIN, 5 * MIN];
 /** No connection (including a request timeout, which jira.js reports as 'network'), a server error, or an error with neither status nor code (not from the Jira client, e.g. an unreadable response): such an error will probably go away soon. */
 const isTransient = err => err.code === 'network' || err.status >= 500 || (err.status == null && !err.code);
 
+const NO_STALE = { issues: [], fetchedAt: null, error: null };
 const DEFAULT_SETTINGS = {
   baseUrl: '',
   email: '',
@@ -76,17 +78,20 @@ function ensureShape(data) {
   if (!LANGUAGE_SETTINGS.includes(d.settings.language)) d.settings.language = 'system';
   d.me = d.me || null;
   // Version 4 → 5: a tracked list per site (host). `tracked` is the list of the site in `site`, the rest are kept in `sites`.
-  // Storage from before belongs to the host that is configured now.
-  d.site = typeof d.site === 'string' ? d.site : hostOf(d.settings.baseUrl);
+  // The list in `tracked` belongs to the host that is configured now: the stored `site` is not trusted, so a file that was edited
+  // or written by another version cannot make a later save swap the list without a change of credentials.
+  d.site = hostOf(d.settings.baseUrl);
   d.tracked = shapeTracked(d.tracked, d.me, from, d.lastCheck);
   const seen = new Set();
   d.sites = (Array.isArray(d.sites) ? d.sites : [])
     .filter(s => s && typeof s.host === 'string' && !seen.has(s.host) && seen.add(s.host))
-    .map(s => ({ host: s.host, tracked: shapeTracked(s.tracked, d.me, from, d.lastCheck) }))
+    .map(s => ({ host: s.host, tracked: shapeTracked(s.tracked, null, from, d.lastCheck) })) // not the connected account's: no mention flags
     .filter(s => s.tracked.length);
   d.reconnected = d.reconnected === true;
-  d.stale = { issues: [], fetchedAt: null, error: null, ...(d.stale || {}) };
-  if (typeof d.stale.site !== 'string') d.stale.site = d.site; // the site the list was fetched from: Track only takes an issue from a list of the current site
+  d.stale = { ...NO_STALE, ...(d.stale || {}) };
+  // The site the list was fetched from. Storage from before has none: that list is from the configured host. A list of another site is not kept.
+  if (typeof d.stale.site !== 'string') d.stale.site = d.site;
+  if (d.stale.site !== d.site) d.stale = { ...NO_STALE, site: d.site };
   d.notes = Array.isArray(d.notes) ? d.notes.filter(n => n && n.id && n.text) : [];
   for (const n of d.notes) delete n.creating;
   d.lastCheck = d.lastCheck || null;
@@ -168,6 +173,7 @@ class Tracker extends EventEmitter {
     this.failures = 0; // consecutive transient errors, for the backoff
     this.status = { state: 'idle', message: null };
     this.removed = new Map();
+    this.marked = new Set(); // change ids of the last Processed actions, for Undo; they belong to the list of the current site
     this.removedNotes = new Map();
     this.typeCache = new Map(); // project -> { at, types }, not persisted
     this.activityCache = new Map(); // key -> { at, result } (failed attempts too), not persisted
@@ -437,7 +443,10 @@ class Tracker extends EventEmitter {
       }
     } catch (err) {
       if (err.code === 'auth' || err.code === 'network') throw err;
-      if (gen === this.staleGen) this.data.stale = { ...this.data.stale, error: err.message };
+      if (gen === this.staleGen) {
+        const kept = this.data.stale.site === this.data.site ? this.data.stale : NO_STALE; // never keep what came from another site
+        this.data.stale = { ...kept, error: err.message, site: this.data.site };
+      }
     }
   }
 
@@ -536,8 +545,9 @@ class Tracker extends EventEmitter {
   /** Tracks an issue from the stale list (we already have its data); any other key goes through addIssues. */
   async track(key) {
     if (this.find(key)) return { ok: true, added: [], duplicates: [key], notFound: [] };
-    const issue = this.data.stale.site === this.data.site ? this.data.stale.issues.find(i => i.key === key) : null; // a list fetched from the previous site holds other issues
+    const issue = this.data.stale.issues.find(i => i.key === key);
     if (!issue) return this.addIssues(key);
+    if (this.data.stale.site !== this.data.site) return { ok: false, error: this.t('error.siteChanged') }; // a list of the previous site holds other issues
     this.data.tracked.unshift({ key, id: issue.id, issue, seenUntil: issue.updated, addedAt: this.now(), lastChecked: this.now(), changes: [] });
     this.store.save();
     this.changed();
@@ -577,14 +587,16 @@ class Tracker extends EventEmitter {
         c.processed = true;
         c.processedAt = now;
         ids.push(c.id);
+        this.marked.add(c.id);
       }
     }
+    while (this.marked.size > MARKED_MAX) this.marked.delete(this.marked.values().next().value);
     if (ids.length) { this.store.save(); this.changed(); }
     return ids;
   }
 
   unmark(ids) {
-    const set = new Set(ids);
+    const set = new Set([].concat(ids).filter(id => this.marked.delete(id)));
     for (const t of this.data.tracked) for (const c of t.changes) if (set.has(c.id)) { c.processed = false; c.processedAt = null; }
     this.store.save();
     this.changed();
@@ -856,7 +868,9 @@ class Tracker extends EventEmitter {
     this.data.sites = sites;
     this.data.tracked = next;
     this.data.site = host;
-    this.removed.clear(); // Undo of Stop tracking belongs to the list it came from
+    this.removed.clear(); // Undo of Stop tracking and of Processed belongs to the list it came from
+    this.marked.clear();
+    this.data.stale = { ...NO_STALE, site: host }; // fetched from the site we left; the next check fetches the new site's
     this.listGen++;
   }
 
