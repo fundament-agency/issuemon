@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-17
+
+### Added
+
+- A new or edited comment that @-mentions you stands out in *Changed*: a *Mentions you* chip, an accent on the row and the mention highlighted in the timeline. Its notification says who mentioned you and where: "Sam mentioned you on ABC-1". Only a mention of your Jira account counts, not your name in plain text, a mention of someone else or a mention in the description.
+- The issue detail shows labels and fix versions, the parent, sub-tasks with how many are done, and linked issues with their relationship and status. Clicking a related key selects it when you track it, or offers *Track*.
+
+### Changed
+
+- A notification leads with the change that matters most: an assignment to you, then a mention of you, then the rest, newest first. An issue assigned to you and commented on afterwards now says "ABC-1 was assigned to you" instead of only showing the comment. The summary for more than 3 changed issues counts what needs you, such as "5 issues changed · 2 assigned to you · 1 mentions you", and lists those keys first. *Changed* keeps its time order.
+
 ## [0.1.3] - 2026-10-17
 
 ### Fixed
@@ -63,7 +74,8 @@ The first public release.
 
 - The data and token migrations from pre-release versions.
 
-[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/fundament-agency/issuemon/compare/v0.1.3...v0.2.0
 [0.1.3]: https://github.com/fundament-agency/issuemon/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/fundament-agency/issuemon/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/fundament-agency/issuemon/compare/v0.1.0...v0.1.1
