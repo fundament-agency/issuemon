@@ -185,3 +185,20 @@ test('comment mentions get a personal chip and notification line, including edit
   assert.equal(describe({ ...c, mentionsMe: false }), 'Sam Rivera: “@Demo User”');
   assert.equal(chip({ ...c, field: 'description' }).mine, false);
 });
+
+test('rankChanges: assignment, mention, flagged risk, then newest; ties use id without mutating input', () => {
+  const { rankChanges } = require('../src/shared/change');
+  const changes = Object.freeze([
+    { id: 'z', field: 'comment', at: 90 },
+    { id: 'b', field: 'status', at: 100 },
+    { id: 'a', field: 'status', at: 100 },
+    { id: 'risk', field: 'priority', risk: true, at: 80 },
+    { id: 'mention', field: 'comment', mentionsMe: true, at: 70 },
+    { ...toMe, id: 'assignment', at: 60 },
+    { id: 'old-mention', field: 'comment', mentionsMe: true, at: 50 },
+  ].map(Object.freeze));
+  assert.deepEqual(rankChanges(changes, 'Demo User').map(c => c.id), ['assignment', 'mention', 'old-mention', 'risk', 'a', 'b', 'z']);
+  assert.equal(changes[0].id, 'z');
+  assert.equal(rankChanges(changes)[0].id, 'mention');
+  assert.deepEqual(rankChanges([], 'Demo User'), []);
+});
