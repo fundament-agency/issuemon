@@ -86,6 +86,31 @@ test('check finds changes after the baseline and notifies them', async t => {
   assert.equal(entry.changes.length, 2);
 });
 
+test('a date in a description or comment that is no timestamp does not stop the checks', async t => {
+  const { jira, tracker } = await setup(t);
+  const { alex, sam } = jira.people;
+  const withDate = timestamp => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [
+    { type: 'text', text: 'Due ' }, { type: 'date', attrs: { timestamp } },
+  ] }] });
+  jira.addIssue({ key: 'WEB-1', summary: 'Odd description', description: withDate('2026-10-17'), updated: Date.now() - DAY });
+  jira.addIssue({ key: 'WEB-2', summary: 'Odd comment', updated: Date.now() - DAY });
+  jira.addIssue({ key: 'WEB-3', summary: 'Normal', updated: Date.now() - DAY });
+
+  // Tracking the issue with the odd description works, and its description reads as written
+  const added = await tracker.addIssues('WEB-1 WEB-2 WEB-3');
+  assert.equal(added.ok, true);
+  assert.equal(tracker.find('WEB-1').issue.description, 'Due 2026-10-17');
+
+  // Odd dates in a comment and a new comment on a normal issue: all recorded in one check
+  jira.comment('WEB-2', withDate('abc'), sam);
+  jira.change('WEB-3', { field: 'status', from: 'To Do', to: 'Review', author: alex });
+  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
+  assert.deepEqual(tracker.find('WEB-2').changes.map(c => [c.field, c.to]), [['comment', 'Due abc']]);
+  assert.deepEqual(tracker.find('WEB-3').changes.map(c => [c.field, c.to]), [['status', 'Review']]);
+  assert.equal(tracker.find('WEB-2').error ?? null, null);
+  assert.deepEqual(await tracker.check(), { ok: true, found: 0 }); // and nothing is reported twice
+});
+
 test('own changes are stored silently as processed', async t => {
   const { jira, tracker, notes } = await setup(t, { ignoreOwn: true });
   jira.addIssue({ key: 'WEB-1', summary: 'x', updated: Date.now() - DAY });

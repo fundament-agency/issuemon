@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- A date in a description or comment that is not a millisecond timestamp, such as `2026-10-17` written through the REST API, no longer stops every check ("Invalid time value"). It shows as written, and a valid timestamp still shows as `YYYY-MM-DD`. Other unusual nodes in a description or comment no longer stop a check either. (#43)
+
 ## [0.3.0] - 2026-10-17
 
 ### Added

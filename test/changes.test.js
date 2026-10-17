@@ -275,3 +275,56 @@ test('a same-text edit that changes the mention account is recorded', () => {
   assert.equal(c.from, '@Sam');
   assert.equal(c.mentions[0].accountId, 'new');
 });
+
+const dateDoc = timestamp => ({ type: 'doc', version: 1, content: [{ type: 'paragraph', content: [
+  { type: 'text', text: 'Due ' }, { type: 'date', attrs: { timestamp } },
+] }] });
+
+test('a date node: a millisecond timestamp gives YYYY-MM-DD, anything else its raw value, and nothing throws', () => {
+  for (const [timestamp, shown] of [
+    [String(Date.UTC(2026, 9, 17, 12)), '2026-10-17'], [Date.UTC(2026, 9, 17, 12), '2026-10-17'],
+    ['2026-10-17', '2026-10-17'], ['abc', 'abc'], ['99999999999999999', '99999999999999999'], [1e17, '100000000000000000'],
+    ['0x10', '0x10'], ['NaN', 'NaN'], ['1e3', '1e3'],
+  ]) {
+    const text = `Due ${shown}`;
+    assert.equal(adfToText(dateDoc(timestamp)), text, JSON.stringify(timestamp));
+    // In a description: normalizeIssue must not throw
+    assert.equal(normalizeIssue({ id: '10001', key: 'WEB-1', fields: { description: dateDoc(timestamp) } }).description, text);
+    // In a comment: changesFromComments must not throw, and the comment is reported
+    const out = changesFromComments([{ id: '9', author, created: '2026-10-03T10:00:00.000+0000', body: dateDoc(timestamp) }], Date.UTC(2026, 9, 2));
+    assert.deepEqual(out.map(c => c.to), [text]);
+  }
+  // No usable value: nothing to show
+  for (const timestamp of [undefined, null, '', {}, ['x']]) assert.equal(adfToText(dateDoc(timestamp)), 'Due', JSON.stringify(timestamp));
+});
+
+test('adfToText: schema-valid nodes with missing or odd attributes never throw', () => {
+  const doc = content => ({ type: 'doc', version: 1, content });
+  const odd = [
+    { type: 'mention', attrs: { text: 5, id: {} } },
+    { type: 'mention', attrs: null },
+    { type: 'emoji', attrs: { text: 5, shortName: {} } },
+    { type: 'emoji' },
+    { type: 'inlineCard', attrs: { url: 7 } },
+    { type: 'blockCard', attrs: [] },
+    { type: 'status', attrs: { text: {} } },
+    { type: 'status', attrs: 'x' },
+    { type: 'text', text: 5 },
+    { type: 'text' },
+    { type: 'date' },
+    { type: 'paragraph', content: 'oops' },
+    { type: 'paragraph', content: [null, 5, 'raw', {}] },
+    { type: 'bulletList', content: [null, { type: 'listItem' }, 5] },
+    { type: 'table', content: [null, 5, { type: 'tableRow' }, { type: 'tableRow', content: [null, { type: 'tableCell' }] }] },
+    { type: 5 },
+    { type: 'table', content: 'oops' },
+    { type: 'orderedList', content: {} },
+  ];
+  for (const node of odd) {
+    assert.equal(typeof adfToText(doc([node])), 'string', JSON.stringify(node));
+    assert.equal(typeof adfToText(doc([{ type: 'paragraph', content: [node] }])), 'string', JSON.stringify(node));
+  }
+  const between = node => adfToText(doc([{ type: 'paragraph', content: [{ type: 'text', text: 'a' }, node, { type: 'text', text: 'b' }] }]));
+  assert.equal(between({ type: 'emoji', attrs: { text: 5 } }), 'ab');
+  assert.equal(between({ type: 'text', text: 5 }), 'ab');
+});

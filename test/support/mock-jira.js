@@ -17,11 +17,13 @@ const ISSUE_TYPES = [
   { id: '10004', name: 'Sub-task', subtask: true, hierarchyLevel: -1 },
 ];
 const jiraDate = ms => new Date(ms).toISOString().replace('Z', '+0000');
-const adf = text => ({ type: 'doc', version: 1, content: String(text).split('\n\n').map(p => ({ type: 'paragraph', content: [{ type: 'text', text: p }] })) });
+/** Plain text becomes a document; an object is taken as the ADF itself (to serve odd but schema-valid content). */
+const adf = text => (text && typeof text === 'object' ? text : { type: 'doc', version: 1, content: String(text).split('\n\n').map(p => ({ type: 'paragraph', content: [{ type: 'text', text: p }] })) });
 
 /** Append real ADF mentions; plain @names in the text remain text nodes. */
 function commentBody(text, mentions) {
   const body = adf(text);
+  if (body === text) return body;
   const content = body.content.at(-1).content;
   for (const person of mentions) content.push(
     { type: 'text', text: ' ' },
