@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Switching to another Jira site no longer turns the tracked issues into issues of the new site that happen to have the same id (#42). Every site, by host, now keeps its own *Tracked* list: the new site starts empty, and switching back restores the old list with its changes. A change of email address keeps the list. Existing tracked issues stay with the site that is configured now.
+
 ## [0.3.0] - 2026-10-17
 
 ### Added

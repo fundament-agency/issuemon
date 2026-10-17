@@ -709,14 +709,14 @@ test('ensureShape: the old Backlog flag and two project fields are migrated, ide
   assert.deepEqual(old({ excludedProjectKeys: ['DEV'] }).settings.excludedProjects, ['DEV']);
   // an existing excludedProjects wins, the old fields disappear
   assert.deepEqual(old({ excludedProjects: ['X'], excludedProjectNames: ['ARCHIVE-*'] }).settings.excludedProjects, ['X']);
-  assert.equal(merged.version, 4);
+  assert.equal(merged.version, 5);
   // fresh install
   const fresh = ensureShape({});
   assert.deepEqual(fresh.settings.excluded, []);
   assert.deepEqual(fresh.settings.excludedProjects, []);
   assert.equal(fresh.settings.notesProject, '');
   assert.equal('excludeBacklog' in fresh.settings, false);
-  assert.equal(fresh.version, 4);
+  assert.equal(fresh.version, 5);
   assert.equal(fresh.settings.staleSort, 'oldest');
   // twice gives the same result
   const once = old({ excluded: ['Closed', 'On hold'], excludeBacklog: true, excludedProjectNames: ['ARCHIVE-*'], excludedProjectKeys: ['DEV'] });
@@ -746,7 +746,7 @@ test('ensureShape: version 2 → 3 sets staleSort to oldest first, once', () => 
   // a v2 store saved the default 'newest', chosen or not
   const v2 = ensureShape({ version: 2, settings: { staleSort: 'newest' } });
   assert.equal(v2.settings.staleSort, 'oldest');
-  assert.equal(v2.version, 4);
+  assert.equal(v2.version, 5);
   // from v3 on the user's choice counts
   assert.equal(ensureShape({ version: 3, settings: { staleSort: 'newest' } }).settings.staleSort, 'newest');
   assert.equal(ensureShape(JSON.parse(JSON.stringify(v2))).settings.staleSort, 'oldest');
@@ -1710,4 +1710,186 @@ test('a reconnect timer consumed by an older check is scheduled again after it f
   assert.equal(timers.length, 2);
   assert.equal(timers.at(-1).ms, 1000);
   assert.equal(tracker.nextCheck, now + 1000);
+});
+
+/* ---------- one tracked list per Jira site (host) ---------- */
+
+/** Tracker on mock site A (`jira`), with a second mock site `other`; both number their issues from 10001, so ids collide. */
+async function setupTwoSites(t) {
+  const ctx = await setup(t);
+  const other = createMockJira({ email: 'user@example.com', token: 'tok' });
+  await other.start();
+  t.after(() => other.stop());
+  ctx.jira.addIssue({ key: 'WEB-1', summary: 'Site A: checkout broken', assignee: ctx.jira.people.me, updated: Date.now() - 30 * DAY });
+  other.addIssue({ key: 'HR-7', summary: 'Site B: salary review', updated: Date.now() - DAY });
+  const switchTo = site => ctx.tracker.saveSettings({ baseUrl: site.url, token: 'tok' }); // another host clears the token unless the patch brings one
+  return { ...ctx, other, switchTo };
+}
+
+test('switching to another Jira site: its issue with the same id is never taken for a tracked issue', async t => {
+  const { jira, other, tracker, notes, switchTo } = await setupTwoSites(t);
+  assert.equal(jira.issues.get('WEB-1').id, other.issues.get('HR-7').id);
+  await tracker.addIssues('WEB-1');
+  switchTo(other);
+  assert.deepEqual(tracker.data.tracked, []);
+  await tracker.check();
+  other.comment('HR-7', 'Confidential: approved', other.people.alex);
+  await tracker.check();
+  assert.deepEqual(tracker.data.tracked, []);
+  assert.deepEqual(notes, []);
+});
+
+test('each Jira site has its own list: switching back restores the old one with its changes and seen state', async t => {
+  const { jira, other, tracker, notes, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  jira.change('WEB-1', { field: 'priority', from: 'Medium', to: 'High', author: jira.people.alex });
+  await tracker.check();
+  assert.equal(notes.length, 1);
+  const before = JSON.parse(JSON.stringify(tracker.data.tracked));
+  assert.equal(before[0].changes.length, 1);
+
+  switchTo(other);
+  await tracker.addIssues('HR-7');
+  assert.deepEqual(tracker.data.tracked.map(x => [x.key, x.issue.summary]), [['HR-7', 'Site B: salary review']]);
+  other.comment('HR-7', 'Looks fine', other.people.alex);
+  await tracker.check();
+  assert.equal(tracker.find('HR-7').changes.length, 1);
+  assert.equal(notes.length, 2);
+
+  switchTo(jira);
+  assert.deepEqual(tracker.data.tracked, before);
+  await tracker.check();
+  assert.deepEqual(tracker.data.tracked.map(x => [x.key, x.issue.summary]), [['WEB-1', 'Site A: checkout broken']]);
+  assert.equal(tracker.find('WEB-1').changes.length, 1);
+  assert.equal(notes.length, 2); // nothing of site B was notified again, nor anything new for A
+
+  switchTo(other);
+  assert.deepEqual(tracker.data.tracked.map(x => x.key), ['HR-7']);
+  assert.equal(tracker.find('HR-7').changes.length, 1);
+});
+
+test('only the host counts: email, path, scheme, case and a trailing slash keep the list', async t => {
+  const { jira, tracker } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  const entry = tracker.find('WEB-1');
+  tracker.saveSettings({ email: 'someone.else@example.com' });
+  assert.equal(tracker.find('WEB-1'), entry);
+  const host = new URL(jira.url).host;
+  for (const url of [`http://${host}/`, `HTTP://${host.toUpperCase()}/jira/software`, ` ${host}/browse/WEB-1 `]) {
+    tracker.saveSettings({ baseUrl: url });
+    assert.equal(tracker.find('WEB-1'), entry, url);
+  }
+  assert.deepEqual(tracker.data.sites, []);
+});
+
+test('an emptied URL keeps the list of the old site for later', async t => {
+  const { jira, tracker } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  tracker.saveSettings({ baseUrl: '' });
+  assert.deepEqual(tracker.data.tracked, []);
+  tracker.saveSettings({ baseUrl: jira.url, token: 'tok' });
+  assert.deepEqual(tracker.data.tracked.map(x => x.key), ['WEB-1']);
+});
+
+test('storage from before there was a list per site belongs to the configured host', async t => {
+  const { jira, other, tracker, store, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  const old = JSON.parse(JSON.stringify(store.data));
+  delete old.site;
+  delete old.sites;
+  old.version = 4;
+  const migrated = ensureShape(old);
+  assert.equal(migrated.site, new URL(jira.url).host);
+  assert.deepEqual(migrated.sites, []);
+  assert.deepEqual(migrated.tracked.map(x => x.key), ['WEB-1']);
+  // And it behaves like a list that was always kept per site.
+  store.data = migrated;
+  switchTo(other);
+  assert.deepEqual(tracker.data.tracked, []);
+  switchTo(jira);
+  assert.deepEqual(tracker.data.tracked.map(x => x.key), ['WEB-1']);
+});
+
+test('the lists of other sites survive a restart, and malformed ones are dropped', async t => {
+  const { jira, other, tracker, store, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  switchTo(other);
+  const reloaded = ensureShape(JSON.parse(JSON.stringify(store.data)));
+  assert.deepEqual(reloaded.sites.map(s => [s.host, s.tracked.map(x => x.key)]), [[new URL(jira.url).host, ['WEB-1']]]);
+  const broken = ensureShape({ settings: { baseUrl: jira.url }, sites: [null, { host: 5 }, { host: 'x.example', tracked: 'no' }, { host: 'y.example', tracked: [{ key: 'A-1' }, null] }] });
+  assert.deepEqual(broken.sites.map(s => [s.host, s.tracked.map(x => x.key)]), [['y.example', ['A-1']]]);
+  assert.deepEqual(broken.sites[0].tracked[0].changes, []);
+});
+
+test('a check that is on its way when the site changes writes nothing into either list', async t => {
+  const { jira, other, tracker, notes, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  jira.comment('WEB-1', 'Site A news', jira.people.alex, Date.now());
+  const running = tracker.check(); // asks site A
+  switchTo(other);
+  await running;
+  assert.deepEqual(tracker.data.tracked, []);
+  assert.deepEqual(notes, []);
+  switchTo(jira);
+  assert.deepEqual(tracker.find('WEB-1').changes, []); // the answer of the interrupted check was dropped, not half applied
+  await tracker.check();
+  assert.equal(tracker.find('WEB-1').changes.length, 1);
+});
+
+test('adding an issue that is on its way when the site changes does not land in the new list', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  other.addIssue({ key: 'WEB-1', summary: 'Site B: same key and id' });
+  const adding = tracker.addIssues('WEB-1'); // asks site A
+  switchTo(other);
+  const r = await adding;
+  assert.equal(r.ok, false);
+  assert.deepEqual(tracker.data.tracked, []);
+  switchTo(jira);
+  assert.deepEqual(tracker.data.tracked, []); // no half-added placeholder was kept for A either
+});
+
+test('Undo of Stop tracking cannot bring an issue of another site back', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  await tracker.addIssues('WEB-1');
+  assert.equal(tracker.untrack('WEB-1'), true);
+  switchTo(other);
+  assert.equal(tracker.restore('WEB-1'), false);
+  assert.deepEqual(tracker.data.tracked, []);
+  switchTo(jira);
+  assert.equal(tracker.restore('WEB-1'), false);
+});
+
+test('tracking from a Stale list that belongs to the previous site asks the new site instead', async t => {
+  const { other, tracker, switchTo } = await setupTwoSites(t);
+  await tracker.check();
+  assert.deepEqual(tracker.data.stale.issues.map(i => i.key), ['WEB-1']);
+  switchTo(other);
+  const r = await tracker.track('WEB-1');
+  assert.deepEqual(r.added, []);
+  assert.deepEqual(tracker.data.tracked, []);
+});
+
+test('an Activity answer from the previous site is neither cached nor shown for the new one', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  jira.comment('WEB-1', 'Site A comment', jira.people.alex);
+  other.addIssue({ key: 'WEB-1', summary: 'Site B' });
+  const asking = tracker.activity('WEB-1');
+  switchTo(other);
+  assert.equal((await asking).ok, false);
+  assert.equal(tracker.activityCache.size, 0);
+});
+
+test('a note that becomes an issue on the previous site is not tracked on the new one', async t => {
+  const { jira, other, tracker, switchTo } = await setupTwoSites(t);
+  jira.addIssue({ key: 'WEB-2', summary: 'Other' });
+  other.addIssue({ key: 'WEB-3', summary: 'Site B: same key as the issue created on site A' });
+  tracker.saveSettings({ notesProject: 'WEB' });
+  const note = tracker.addNote('Fix it');
+  const creating = tracker.createIssueFromNote(note.id);
+  switchTo(other);
+  const r = await creating;
+  assert.equal(r.key, 'WEB-3');
+  assert.equal(r.tracked, false);
+  assert.equal(r.error, 'The Jira site changed while this was running.');
+  assert.deepEqual(tracker.data.tracked, []);
 });

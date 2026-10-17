@@ -422,7 +422,7 @@ const properties = [
   property('tracker.serial', 'Jira activity and user actions one at a time: no duplicates, nothing lost, every pending change notified, restarts change nothing.', { length: 60 }, 300),
   property('tracker.faults', 'Same, with transient failures (5xx, 429, network, a 200 that is no answer) and Jira changing during a check.', { length: 60, faults: true }, 400),
   property('tracker.concurrent', 'Same, with user actions and Jira activity overlapping a running check.', { length: 40, concurrent: true }, 300),
-  property('tracker.sites', 'Switching between two Jira sites, also during a check: a tracked issue stays itself and the identity follows the site.', { length: 30, sites: true, concurrent: true }, 200),
+  property('tracker.sites', 'Switching between two Jira sites, also during a check: a tracked issue stays itself, each site keeps its own list and the identity follows the site.', { length: 30, sites: true, concurrent: true }, 200),
 ];
 
 module.exports = { properties };

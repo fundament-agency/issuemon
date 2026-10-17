@@ -100,6 +100,7 @@
   'error.titleRequired': 'Gib dem Issue einen Titel.',
   'error.notesProjectRequired': 'Lege zuerst in den Einstellungen ein Projekt für neue Issues fest.',
   'error.newIssueUnavailable': 'Das neue Issue kann (noch) nicht abgerufen werden.',
+  'error.siteChanged': 'Die Jira-Site wurde gewechselt, während dies lief.',
   'error.notificationsUnsupported': 'Mitteilungen werden auf diesem System nicht unterstützt.',
   'error.startup': 'IssueMon kann nicht starten',
 
