@@ -1654,3 +1654,25 @@ test('superseded people-list responses cannot replace the newest account list or
     assert.equal(tracker.people.error, null);
   });
 });
+
+test('a reconnect timer consumed by an older check is scheduled again after it finishes', async t => {
+  const { tracker } = await setup(t);
+  let now = 1000;
+  tracker.now = () => now;
+  const pending = deferred(), started = deferred();
+  tracker.getClient = () => ({ myself: () => { started.resolve(); return pending.promise; } });
+  const timers = [];
+  tracker.setTimer = (fn, ms) => { timers.push({ fn, ms }); return timers.length; };
+  const old = tracker.check();
+  await started.promise;
+  tracker.credentialsChanged();
+  assert.equal(timers.at(-1).ms, 1000);
+  now += 1000;
+  timers.at(-1).fn(); // rejoins the old request; cannot check the new account yet
+  pending.resolve({ accountId: 'old', name: 'Old' });
+  await old;
+  assert.equal(tracker.data.me, null);
+  assert.equal(timers.length, 2);
+  assert.equal(timers.at(-1).ms, 1000);
+  assert.equal(tracker.nextCheck, now + 1000);
+});
