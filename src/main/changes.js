@@ -13,10 +13,24 @@ function parseJiraDate(value) {
 const user = u => (u ? { accountId: u.accountId || null, name: u.displayName || null } : null);
 
 /** Fields we fetch per issue (bulkFetch adds the description). */
-const ISSUE_FIELDS = ['summary', 'status', 'assignee', 'priority', 'issuetype', 'updated', 'labels', 'fixVersions', 'project'];
+const ISSUE_FIELDS = ['summary', 'status', 'assignee', 'priority', 'issuetype', 'updated', 'labels', 'fixVersions', 'project', 'parent', 'subtasks', 'issuelinks'];
 
 /** The description is kept in storage; more than this is not needed for an overview. */
 const DESCRIPTION_MAX = 2000;
+
+/** Related issues are shallow: Jira may omit fields when access is limited. */
+function relatedIssue(raw) {
+  if (!raw || typeof raw.key !== 'string' || !raw.key) return null;
+  return {
+    key: raw.key,
+    summary: raw.fields?.summary || '',
+    status: raw.fields?.status?.name || null,
+    statusCat: raw.fields?.status?.statusCategory?.key || 'new',
+  };
+}
+
+const array = value => Array.isArray(value) ? value : [];
+const named = value => typeof value === 'string' && value.length > 0;
 
 function normalizeIssue(raw) {
   const f = raw.fields || {};
@@ -31,8 +45,15 @@ function normalizeIssue(raw) {
     priority: f.priority?.name || null,
     assignee: user(f.assignee),
     updated: parseJiraDate(f.updated),
-    labels: Array.isArray(f.labels) ? f.labels : [],
-    fixVersions: Array.isArray(f.fixVersions) ? f.fixVersions.map(v => v.name) : [],
+    labels: array(f.labels).filter(named),
+    fixVersions: array(f.fixVersions).map(v => v?.name).filter(named),
+    parent: relatedIssue(f.parent),
+    subtasks: array(f.subtasks).map(relatedIssue).filter(Boolean),
+    links: array(f.issuelinks).flatMap(link => {
+      const issue = relatedIssue(link?.inwardIssue || link?.outwardIssue);
+      if (!issue) return [];
+      return [{ type: (link.inwardIssue ? link.type?.inward : link.type?.outward) || link.type?.name || null, issue }];
+    }),
     project: f.project?.name || null,
     projectKey: f.project?.key || null,
     description: adfToText(f.description).slice(0, DESCRIPTION_MAX),
