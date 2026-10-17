@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- A failing request for one issue's changes or comments no longer costs changes. A server error, a timeout or an answer that cannot be read used to replace them for good with a lesser comparison of the issue (no author, comments or attachments), and a rate limit, a login error or no connection stopped the check and dropped what other issues had found. Now only that issue waits for the next check, the other issues are recorded and notified as usual and the check still reports the error. A refusal that stays (such as 403, or a 404 for an issue that still exists) still falls back to comparing the issue itself (#40, #41).
+
 ## [0.3.0] - 2026-10-17
 
 ### Added

@@ -1769,6 +1769,23 @@ test('a 404 on the changelog of an issue that still exists falls back to what th
   assert.deepEqual(tracker.find('WEB-1').changes.map(c => [c.field, c.to]), [['status', 'Review']]);
 });
 
+test('a 404 for an issue that is back by the time it is checked is asked once more, not recorded from the snapshot', async t => {
+  const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
+  commentAndAttachment(jira);
+  const real = tracker.getClient;
+  let vanished = false;
+  let back = false;
+  tracker.getClient = () => ({
+    ...real(),
+    // The issue is gone for the changelog request, and back for the check that asks whether it still exists.
+    changelog: async key => { if (!vanished) { vanished = true; jira.remove(key); } return real().changelog(key); },
+    bulkFetch: async keys => { if (vanished && !back) { back = true; jira.restore('WEB-1'); } return real().bulkFetch(keys); },
+  });
+  assert.deepEqual(await tracker.check(), { ok: true, found: 2 });
+  assert.deepEqual(tracker.find('WEB-1').changes.map(c => [c.field, c.author?.name]).sort(), [['attachment', 'Sam Rivera'], ['comment', 'Sam Rivera']]);
+  assert.equal(notes.length, 1);
+});
+
 test('a 404 because the issue disappeared after the bulk fetch records nothing; the issue is retried', async t => {
   const { jira, tracker, notes } = await trackedSetup(t, 'WEB-1');
   const entry = tracker.find('WEB-1');

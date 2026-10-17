@@ -119,6 +119,8 @@ async function mapLimit(items, limit, fn) {
 
 /** A failure that may pass: login (a new token may be on its way), a rate limit, or a failure on Jira's side or on the way. */
 const passes = err => err.code === 'auth' || err.code === 'rate_limited' || isTransient(err);
+/** waitingError: the issue exists, so the 404 may have been a moment (see there). */
+const EXISTS = Symbol('exists');
 /** After this, no new request is started during the check: Jira refuses us, whatever the issue. */
 const refusesAll = err => err.code === 'auth' || err.code === 'rate_limited';
 
@@ -391,17 +393,27 @@ class Tracker extends EventEmitter {
 
       if (stopped) return; // not reached before Jira refused us: it keeps its seenUntil and waits for the next check
       // Both requests run to the end, so none is left behind when one fails.
-      const answers = await Promise.allSettled([client.changelog(t.key), client.comments(t.key)]);
-      const rejected = answers.filter(a => a.status === 'rejected').map(a => a.reason);
+      const asks = [() => client.changelog(t.key), () => client.comments(t.key)];
+      let answers = await Promise.allSettled(asks.map(ask => ask()));
+      let rejected = answers.filter(a => a.status === 'rejected').map(a => a.reason);
       let found;
       if (rejected.length) {
         // A snapshot knows far less (no author, no comments or attachments), so only a lasting refusal falls back to it. What may pass
         // makes this issue wait: its seenUntil and lastChecked stay and the next check asks again.
-        const waiting = await this.waitingError(client, t, mostUrgent(rejected));
+        let waiting = await this.waitingError(client, t, mostUrgent(rejected));
+        if (waiting === EXISTS) {
+          // A 404 while the issue exists: it may have been gone for a moment when the request arrived (deleted and restored). Only a
+          // 404 that repeats is a lasting refusal, so the failed requests go out once more.
+          answers = await Promise.allSettled(answers.map((a, i) => (a.status === 'rejected' ? asks[i]() : a)));
+          rejected = answers.filter(a => a.status === 'rejected').map(a => a.reason);
+          waiting = rejected.length ? await this.waitingError(client, t, mostUrgent(rejected), { retried: true }) : null;
+        }
         if (waiting) {
           fail(waiting);
           return;
         }
+      }
+      if (rejected.length) {
         found = changesFromSnapshots(prev, next);
       } else {
         try {
@@ -467,12 +479,14 @@ class Tracker extends EventEmitter {
    * snapshot takes over. Only what may pass makes it wait: a login error, a rate limit, a server error, no connection, an answer
    * that cannot be read, and a 404 for an issue that has just disappeared (the next check reports it as missing). Every other
    * 4xx (400, 403, 410, a 404 for an issue that still exists) is a refusal that retrying will not change.
+   * A first 404 for an issue that does exist answers EXISTS: it may have been deleted and restored in between, so the caller asks
+   * once more, and only a 404 that repeats (`retried`) is a refusal.
    */
-  async waitingError(client, t, err) {
+  async waitingError(client, t, err, { retried = false } = {}) {
     if (err.code === 'not_found') {
       try {
         const { issues } = await client.bulkFetch([t.id || t.key]); // 404 is also what a deleted issue answers
-        return issues.length ? null : err;
+        return issues.length ? (retried ? null : EXISTS) : err;
       } catch (verifyError) {
         return verifyError;
       }
