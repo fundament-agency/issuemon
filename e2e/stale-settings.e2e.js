@@ -92,4 +92,16 @@ test('stale settings: background renders preserve edits until blur, then refresh
   await page.click('.pchip-x[data-id="unassigned"]');
   await staleCount(4);
   assert.equal((await settings()).staleUnassigned, false);
+
+  // The filter menu counts each person's stale issues, and Unassigned's, whatever the filter.
+  await page.click('#person-unassigned');
+  await staleCount(5);
+  await page.click('[data-view="stale"]');
+  await page.click('#stale-menu');
+  const items = () => page.locator('.fitem').evaluateAll(els => els.map(e => [e.querySelector('.fname').textContent, e.querySelector('.n').textContent]));
+  const counts = [['Everyone', '5'], ['You', '2'], ['Alex Morgan', '1'], ['Sam Rivera', '1'], ['Unassigned', '1']];
+  assert.deepEqual(await items(), counts);
+  await page.click('.fitem[data-id="acc-sam"]');
+  await staleCount(1);
+  assert.deepEqual(await items(), counts);
 });
