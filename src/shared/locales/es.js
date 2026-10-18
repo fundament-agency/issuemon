@@ -342,7 +342,7 @@
   'stale.trackToo': 'Seguir también',
 
   // Notes page. {button} and {settings} are HTML
-  'notes.hint': 'Con {button} eliges el título, el proyecto y el tipo; la incidencia va al backlog y después se sigue automáticamente.',
+  'notes.hint': 'Con {button} eliges el título, el proyecto, el tipo, el responsable y la descripción; la incidencia va al backlog y después se sigue automáticamente.',
   'notes.noProject': 'Elige un proyecto en {settings} para convertir una nota en incidencia.',
   'notes.placeholder': 'Nota nueva, Intro para guardar',
   'notes.empty': 'Aún no hay notas.',

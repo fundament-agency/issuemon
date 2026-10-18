@@ -339,7 +339,7 @@
   'stale.trackToo': 'Ook tracken',
 
   // Notes page
-  'notes.hint': 'Met {button} kies je titel, project en type; het issue komt in de backlog en wordt daarna automatisch getrackt.',
+  'notes.hint': 'Met {button} kies je titel, project, type, toegewezene en beschrijving; het issue komt in de backlog en wordt daarna automatisch getrackt.',
   'notes.noProject': 'Stel in {settings} een project in om van een notitie een issue te maken.',
   'notes.placeholder': 'Nieuwe notitie, Enter om op te slaan',
   'notes.empty': 'Nog geen notities.',

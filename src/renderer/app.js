@@ -28,7 +28,8 @@
   const UI = { view: 'changed', selected: null, detailOpen: false, addText: '', noteText: '', doneOpen: false, trackedQuery: '', peopleQuery: '', staleFilter: [], staleMenu: false, highlight: null, pendingSelect: null, reveal: null, conn: null, notifyBusy: false, updateBusy: false, updateFailed: false, draft: null, connectDraft: null, activity: {}, descOpen: {}, help: false };
   // UI.doneOpen: the Done group in Tracked is expanded; UI.trackedQuery: the text in the Tracked filter
   // UI.connectDraft: what you typed on the connect screen, { baseUrl, email, token }; survives a re-render from a state push
-  // UI.draft: a note's open create panel, { id, summary, project, typeId, types, typesState, typesFor, typesError, error, creating }
+  // UI.draft: a note's open create panel, { id, summary, project, typeId, types, typesState, typesFor, typesError, assignee, assigneeMenu,
+  // assigneeQuery, description, projectMissing, error, creating }; assignee is { accountId, name } or null for Unassigned
   let drag = null; // the note being dragged: { id, li, list }
 
   /* ---------- derived state ---------- */
@@ -686,12 +687,48 @@
   const COUNT_FROM = 200; // above this many characters the title shows a counter
 
   function draftTypeField(d) {
+    if (d.typesState === 'none') return `<select id="draft-type" data-draft-type disabled><option>${esc(t('draft.defaultType'))}</option></select>`;
     if (d.typesState === 'loading') return `<select id="draft-type" data-draft-type disabled><option>${esc(t('draft.typesLoading'))}</option></select>`;
     if (d.typesState === 'error' || !d.types.length) return `<select id="draft-type" data-draft-type disabled><option>${esc(t('draft.defaultType'))}</option></select>`;
     return `<select id="draft-type" data-draft-type>${d.types.map(ty => `<option value="${esc(ty.id)}" ${ty.id === d.typeId ? 'selected' : ''}>${esc(ty.name)}</option>`).join('')}</select>`;
   }
 
-  /** The panel under a note: review summary, project and type before anything goes to Jira. */
+  /** Assignee choices: Unassigned, you, then everyone on the site by name, as in the people list for Stale. */
+  function assigneeOptions() {
+    const all = new Map();
+    for (const p of [...S.people.list, ...(S.me ? [S.me] : [])]) if (!all.has(p.accountId)) all.set(p.accountId, { accountId: p.accountId, name: p.name });
+    return [null, ...sortPeople([...all.values()], S.me, t.locale)];
+  }
+  const assigneeName = p => (!p ? t('person.unassigned') : isMe(p) ? t('person.you') : p.name);
+
+  /** The items of the assignee menu, filtered by the search field; the same items and keys as the Stale filter menu. */
+  function assigneeListHtml(d) {
+    const P = S.people;
+    const q = fold(d.assigneeQuery.trim());
+    const found = assigneeOptions().filter(p => !q || fold(assigneeName(p)).includes(q));
+    const items = found.slice(0, PEOPLE_MAX).map(p => `<button type="button" id="da-${esc(p?.accountId || 'none')}" class="fitem" data-action="draft-assignee" data-id="${esc(p?.accountId || '')}" aria-pressed="${(p?.accountId || '') === (d.assignee?.accountId || '')}">${icon('check')}${avatar(p, 'xs')}<span class="fname">${esc(assigneeName(p))}</span></button>`).join('');
+    let status = '';
+    if (P.error) status = `<span class="err-text">${esc(t('settings.peopleFailed', { error: P.error }))}</span> <button type="button" class="linkish" data-action="people-reload">${esc(t('settings.peopleRetry'))}</button>`;
+    else if (P.loading && !P.list.length) status = `${icon('refresh', 'spin')} ${esc(t('settings.peopleLoading'))}`;
+    else if (!found.length) status = esc(t('settings.peopleNone'));
+    else if (found.length > PEOPLE_MAX) status = esc(t('settings.peopleMore', { n: found.length - PEOPLE_MAX }));
+    return items + (status ? `<div class="people-more">${status}</div>` : '');
+  }
+
+  /** A button with a dropdown menu, like the person filter on the Stale page; a search field once the list is long. */
+  function assigneeField(d, busy) {
+    const menu = d.assigneeMenu && !busy ? `<div class="fmenu" role="group" aria-labelledby="draft-assignee-l">
+        ${assigneeOptions().length > 9 ? `<input id="draft-assignee-q" type="text" data-assignee-q value="${esc(d.assigneeQuery)}" placeholder="${esc(t('settings.peopleSearch'))}" autocomplete="off" spellcheck="false" aria-label="${esc(t('settings.peopleSearchLabel'))}">` : ''}
+        <div class="fmenu-list" data-assignee-list>${assigneeListHtml(d)}</div>
+      </div>` : '';
+    return `<div class="dfld"><span class="dfld-l" id="draft-assignee-l">${esc(t('field.assignee'))}</span>
+      <div class="filter" data-assignee-picker>
+        <button type="button" id="draft-assignee" class="btn sm ftoggle" data-action="draft-assignee-menu" aria-expanded="${!!d.assigneeMenu}" aria-labelledby="draft-assignee-l draft-assignee" ${busy ? 'disabled' : ''}>${avatar(d.assignee, 'xs')}<span>${esc(assigneeName(d.assignee))}</span>${icon('chevron')}</button>
+        ${menu}
+      </div></div>`;
+  }
+
+  /** The panel under a note: review summary, project, type, assignee and description before anything goes to Jira. */
   function draftPanel(n, d) {
     const busy = d.creating || !!n.creating;
     const project = d.project || notesProjectOf(S.settings);
@@ -702,7 +739,11 @@
         <label class="dfld"><span class="dfld-l">${esc(t('draft.project'))}</span>
           <input id="draft-project" type="text" data-draft-field value="${esc(d.project)}" maxlength="20" autocomplete="off" autocapitalize="characters" spellcheck="false" ${busy ? 'readonly' : ''}></label>
         <label class="dfld"><span class="dfld-l">${esc(t('field.issuetype'))}</span>${draftTypeField(d)}</label>
+        ${assigneeField(d, busy)}
       </div>
+      <label class="dfld"><span class="dfld-l">${esc(t('field.description'))}</span>
+        <textarea id="draft-description" data-draft-desc rows="3" autocomplete="off" ${busy ? 'readonly' : ''}>${esc(d.description)}</textarea></label>
+      ${!project ? `<p id="draft-project-hint" class="draft-msg ${d.projectMissing ? 'err-text' : 'va-hint'}" ${d.projectMissing ? 'role="alert"' : ''}>${esc(t('draft.typesError', { error: t('error.projectRequired') }))}</p>` : ''}
       ${d.typesState === 'error' ? `<p class="draft-msg err-text">${esc(t('draft.typesError', { error: d.typesError }))}</p>` : ''}
       ${d.error ? `<p class="draft-msg err-text" role="alert" id="draft-error">${esc(d.error)}</p>` : ''}
       ${project ? `<p class="va-hint">${esc(t('draft.backlog', { project }))}</p>` : ''}
@@ -1276,8 +1317,9 @@
     if (!note || note.creating) return;
     if (UI.draft?.creating && UI.draft.id !== id) return snack(t('toast.stillCreating'), null, 'warn');
     if (UI.draft?.id !== id) {
-      UI.draft = { id, summary: note.text, project: notesProjectOf(S.settings), typeId: '', types: [], typesState: 'loading', typesFor: null, error: null, creating: false };
+      UI.draft = { id, summary: note.text, project: notesProjectOf(S.settings), typeId: '', types: [], typesState: 'loading', typesFor: null, assignee: null, assigneeMenu: false, assigneeQuery: '', description: '', projectMissing: false, error: null, creating: false };
       loadDraftTypes();
+      api.loadPeople(); // for the assignee; main refetches them at most once an hour
     }
     render();
     const el = $('#draft-summary');
@@ -1289,9 +1331,13 @@
     const d = UI.draft;
     if (!d) return;
     const project = d.project;
-    d.typesState = 'loading';
     d.typeId = '';
     d.typesFor = null;
+    if (!project && !notesProjectOf(S.settings)) { // nothing to ask Jira about: the panel shows a hint instead of an error
+      Object.assign(d, { types: [], typesState: 'none', typesFor: project });
+      return renderSoon();
+    }
+    d.typesState = 'loading';
     const r = await api.issueTypes(project);
     if (UI.draft !== d || d.project !== project) return; // closed, or another project in the meantime
     d.typesFor = project;
@@ -1314,15 +1360,35 @@
     if (restoreFocus && id) document.querySelector(`[data-action="note-issue"][data-id="${CSS.escape(id)}"]`)?.focus();
   }
 
+  /** Chooses the assignee ('' = Unassigned), closes the menu and puts the focus back on its button. */
+  function pickAssignee(id) {
+    const d = UI.draft;
+    if (!d || d.creating) return;
+    d.assignee = id ? assigneeOptions().find(p => p?.accountId === id) || d.assignee : null;
+    d.assigneeMenu = false;
+    render();
+    $('#draft-assignee')?.focus();
+  }
+
   async function createDraft() {
     const d = UI.draft;
     const note = d && S.notes.find(n => n.id === d.id);
     if (!note || d.creating || note.creating || !d.summary.trim()) return;
+    if (!d.project && !notesProjectOf(S.settings)) { // the hint turns red; nothing goes to Jira
+      d.projectMissing = true;
+      render();
+      $('#draft-project')?.focus();
+      return;
+    }
     d.creating = true;
+    d.assigneeMenu = false;
     d.error = null;
     render();
     // We don't send a type that belonged to another project: Jira then picks the default type itself.
-    const r = await api.createIssueFromNote(d.id, { summary: d.summary, project: d.project, typeId: d.typesFor === d.project ? d.typeId : '' });
+    const r = await api.createIssueFromNote(d.id, {
+      summary: d.summary, project: d.project, typeId: d.typesFor === d.project ? d.typeId : '',
+      assignee: d.assignee?.accountId || '', description: d.description,
+    });
     d.creating = false;
     if (!r.ok) {
       d.error = r.error;
@@ -1415,6 +1481,14 @@
     'note-issue': d => openDraft(d.id),
     'draft-create': () => createDraft(),
     'draft-cancel': () => { if (UI.draft && !UI.draft.creating) closeDraft(true); },
+    'draft-assignee-menu': () => {
+      if (!UI.draft || UI.draft.creating) return;
+      UI.draft.assigneeMenu = !UI.draft.assigneeMenu;
+      UI.draft.assigneeQuery = '';
+      render();
+      if (UI.draft.assigneeMenu) $('#draft-assignee-q')?.focus();
+    },
+    'draft-assignee': d => pickAssignee(d.id),
     'note-remove': d => removeNote(d.id),
     'stale-filter': d => toggleStaleFilter(d.id),
     'stale-menu': () => { UI.staleMenu = !UI.staleMenu; render(); },
@@ -1446,6 +1520,7 @@
   document.addEventListener('click', e => {
     const el = e.target.closest('[data-action]');
     if (UI.staleMenu && !e.target.closest('.filter')) { UI.staleMenu = false; render(); } // a click outside closes the filter menu
+    if (UI.draft?.assigneeMenu && !e.target.closest('[data-assignee-picker]')) { UI.draft.assigneeMenu = false; render(); } // and the assignee menu
     if (el) Handlers[el.dataset.action]?.(el.dataset, el, e);
   });
 
@@ -1475,7 +1550,15 @@
           el.setSelectionRange(pos, pos);
         }
         d.project = value;
+        if (value) d.projectMissing = false;
       }
+      return;
+    }
+    if (e.target.matches('[data-draft-desc]') && UI.draft) { UI.draft.description = e.target.value; return; }
+    if (e.target.matches('[data-assignee-q]') && UI.draft) {
+      UI.draft.assigneeQuery = e.target.value;
+      const list = $('[data-assignee-list]');
+      if (list) list.innerHTML = assigneeListHtml(UI.draft);
       return;
     }
     if (e.target.matches('[data-note-input]')) { UI.noteText = e.target.value; return; }
@@ -1579,9 +1662,22 @@
     if (UI.help && e.key === 'Escape') { e.preventDefault(); UI.help = false; render(); return; }
     if (drag) { if (e.key === 'Escape') { e.preventDefault(); endDrag(false); } return; }
     if (UI.staleMenu && e.key === 'Escape') { e.preventDefault(); UI.staleMenu = false; render(); $('#stale-menu')?.focus(); return; }
-    if (UI.staleMenu && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && e.target.closest?.('.filter')) {
+    if (UI.draft?.assigneeMenu && e.key === 'Escape' && e.target.closest?.('[data-assignee-picker]')) {
+      e.preventDefault(); // only the menu closes, not the panel
+      UI.draft.assigneeMenu = false;
+      render();
+      $('#draft-assignee')?.focus();
+      return;
+    }
+    if (UI.draft?.assigneeMenu && e.key === 'Enter' && e.target.matches('[data-assignee-q]')) { // Enter in the search field picks the first match
+      e.preventDefault();
+      const first = $('[data-assignee-list] .fitem');
+      if (first) pickAssignee(first.dataset.id);
+      return;
+    }
+    if ((UI.staleMenu || UI.draft?.assigneeMenu) && (e.key === 'ArrowDown' || e.key === 'ArrowUp') && e.target.closest?.('.filter')) {
       e.preventDefault(); // arrows move through the filter menu instead of the list
-      const items = [...document.querySelectorAll('.fmenu .fitem')], i = items.indexOf(e.target), down = e.key === 'ArrowDown';
+      const items = [...e.target.closest('.filter').querySelectorAll('.fmenu .fitem')], i = items.indexOf(e.target), down = e.key === 'ArrowDown';
       items[i < 0 ? (down ? 0 : items.length - 1) : (i + (down ? 1 : -1) + items.length) % items.length]?.focus();
       return;
     }

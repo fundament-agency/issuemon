@@ -341,7 +341,7 @@
   'stale.trackToo': 'Auch verfolgen',
 
   // Notes page
-  'notes.hint': 'Mit {button} wählst du Titel, Projekt und Typ; das Issue landet im Backlog und wird danach automatisch verfolgt.',
+  'notes.hint': 'Mit {button} wählst du Titel, Projekt, Typ, Bearbeiter und Beschreibung; das Issue landet im Backlog und wird danach automatisch verfolgt.',
   'notes.noProject': 'Lege in den {settings} ein Projekt fest, um aus einer Notiz ein Issue zu machen.',
   'notes.placeholder': 'Neue Notiz, Enter zum Speichern',
   'notes.empty': 'Noch keine Notizen.',
