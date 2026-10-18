@@ -550,11 +550,10 @@
   /** The groups in the filter menu, in order: the people, then Unassigned. `short` is the label on the closed menu:
    *  first names, unless two people share one. The counts are of all fetched issues, not of the filtered list. */
   function staleGroups() {
-    const { people, unassigned } = C.stale;
-    const count = test => S.stale.issues.filter(test).length;
+    const { people, unassigned, counts } = C.stale;
     const short = p => (isMe(p) ? t('person.you') : people.some(q => q !== p && firstName(q) === firstName(p)) ? p.name : firstName(p));
-    const groups = people.map(p => ({ id: p.accountId, name: isMe(p) ? t('person.you') : p.name, short: short(p), avatar: avatar(p, 'xs'), n: count(i => i.assignee?.accountId === p.accountId) }));
-    if (unassigned) groups.push({ id: UNASSIGNED, name: t('person.unassigned'), short: t('person.unassigned'), avatar: avatar(null, 'xs'), n: count(i => !i.assignee) });
+    const groups = people.map(p => ({ id: p.accountId, name: isMe(p) ? t('person.you') : p.name, short: short(p), avatar: avatar(p, 'xs'), n: counts[p.accountId] }));
+    if (unassigned) groups.push({ id: UNASSIGNED, name: t('person.unassigned'), short: t('person.unassigned'), avatar: avatar(null, 'xs'), n: counts[UNASSIGNED] });
     return groups;
   }
 
