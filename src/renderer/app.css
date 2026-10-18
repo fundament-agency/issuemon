@@ -121,7 +121,15 @@
 .note-draft { flex: 1 1 100%; margin: 4px 0 8px 24px; padding: 12px 14px; border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); display: grid; gap: 10px; }
 .dfld { display: grid; gap: 5px; min-width: 0; font-size: 13px; }
 .dfld-l { font-weight: 600; }
-.dfld-row { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(140px, 2fr); gap: 10px; }
+.dfld-row { display: grid; grid-template-columns: minmax(90px, 1fr) minmax(120px, 1.5fr) minmax(140px, 1.5fr); gap: 10px; }
+.note-draft textarea { width: 100%; min-width: 0; padding: 7px 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; line-height: 1.4; resize: vertical; }
+.note-draft textarea:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.note-draft textarea[readonly] { color: var(--muted); }
+.note-draft .ftoggle { width: 100%; height: 34px; justify-content: flex-start; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); font-weight: 400; }
+.note-draft .ftoggle span:not(.avatar) { flex: 1; max-width: none; text-align: left; white-space: nowrap; }
+.note-draft .fmenu { left: 0; right: auto; }
+.fmenu input[type=text] { height: 30px; margin-bottom: 4px; }
+.fmenu-list { display: grid; }
 .note-draft input[type=text], .note-draft select { width: 100%; min-width: 0; height: 34px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
 .note-draft input:focus, .note-draft select:focus { outline: 0; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .note-draft input[readonly], .note-draft select:disabled { color: var(--muted); }
@@ -208,6 +216,7 @@
   .note-time { display: none; }
   .note-text { margin-left: 0; }
   .note-draft { margin-left: 0; }
+  .dfld-row { grid-template-columns: 1fr 1fr; }
 }
 
 /* ---------- additions for the app ---------- */

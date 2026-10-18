@@ -102,7 +102,9 @@ function genCase(r, hostile) {
     conn: r.pick([null, 'busy', { ok: r.bool(), message: s() }]),
     draft: notes.length && r.bool(0.4) ? {
       id: notes[0].id, summary: s(), project: s(), typeId: '1', types: r.array(i => ({ id: String(i), name: s() }), 0, 3),
-      typesState: r.pick(['loading', 'ready', 'error']), typesError: s(), error: r.bool(0.3) ? s() : null, creating: r.bool(0.1),
+      typesState: r.pick(['loading', 'ready', 'error', 'none']), typesError: s(), error: r.bool(0.3) ? s() : null, creating: r.bool(0.1),
+      assignee: people.length && r.bool(0.5) ? r.pick(people) : null, assigneeMenu: r.bool(), assigneeQuery: r.bool(0.3) ? s() : '',
+      description: r.bool(0.5) ? s() : '', projectMissing: r.bool(0.2),
     } : null,
   };
   return { state, ui };
