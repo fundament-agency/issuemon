@@ -1,5 +1,5 @@
 /* Small domain rules that main and renderer both know: note and project rules, intervals, themes,
- * the connected check and the choice of the default issue type. Shared between main (CommonJS) and renderer (classic script). */
+ * the connected check, the choice of the default issue type and due dates. Shared between main (CommonJS) and renderer (classic script). */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('./text'));
   else root.IssuemonRules = factory(root.IssuemonText);
@@ -22,5 +22,27 @@
   /** Type for a new issue from a list of standard types: Task (or its Dutch, French, German or Spanish name), otherwise the first. */
   const defaultIssueType = types => types.find(t => /^(task|taak|tâche|aufgabe|tarea)$/i.test(t.name)) || types[0] || null;
 
-  return { NOTE_MAX, INTERVALS, THEMES, noteText, projectKey, notesProjectOf, isConfigured, defaultIssueType };
+  const pad = n => String(n).padStart(2, '0');
+  /** The local calendar day of `date` as YYYY-MM-DD, the form of a Jira due date. */
+  const localDay = (date = new Date()) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  /** A YYYY-MM-DD day as a day number (days since 1970-01-01), or null when it is no real date. */
+  function dayNumber(day) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(typeof day === 'string' ? day : '');
+    if (!m) return null;
+    const ms = Date.UTC(+m[1], m[2] - 1, +m[3]);
+    return new Date(ms).getUTCDate() === +m[3] ? ms / 86_400_000 : null; // 2026-02-31 rolls over: not a date
+  }
+  /** Calendar days from `today` until `due` (both YYYY-MM-DD): negative when overdue, 0 when due today, null without a valid date. */
+  function daysUntilDue(due, today) {
+    const d = dayNumber(due), now = dayNumber(today);
+    return d == null || now == null ? null : d - now;
+  }
+  /** The marker on a tracked issue's row: 'overdue' or 'today' for an unfinished issue, otherwise null. Being overdue is never a change. */
+  function dueMarker(issue, today) {
+    if (!issue || issue.statusCat === 'done') return null;
+    const days = daysUntilDue(issue.due, today);
+    return days == null || days > 0 ? null : days < 0 ? 'overdue' : 'today';
+  }
+
+  return { NOTE_MAX, INTERVALS, THEMES, noteText, projectKey, notesProjectOf, isConfigured, defaultIssueType, localDay, daysUntilDue, dueMarker };
 });

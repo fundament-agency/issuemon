@@ -11,6 +11,7 @@ const { _electron: electron } = require('playwright-core');
 const { createMockJira, seedDemo } = require('../test/support/mock-jira');
 const { launchOptions } = require('./launch');
 const { version: VERSION } = require('../package.json');
+const { localDay } = require('../src/shared/rules');
 
 const SHOTS = path.join(__dirname, 'screenshots');
 
@@ -1011,6 +1012,75 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
       await page.click('.va-d [data-action="untrack"]');
       await page.waitForSelector(`.va-row[data-row="${key}"]`, { state: 'detached' });
     }
+  });
+
+  await t.test('due dates: overdue and due-today markers on unfinished rows, the date in the detail; a moved due date is a change once', async t => {
+    const keys = ['DUE-1', 'DUE-2', 'DUE-3'];
+    t.after(async () => {
+      await app.evaluate((_, keys) => {
+        for (const key of keys) global.__issuemon.tracker.untrack(key);
+      }, keys);
+      for (const key of keys) jira.issues.delete(key);
+    });
+    const day = offset => localDay(new Date(Date.now() + offset * 86_400_000));
+    const updated = Date.now() - 60_000;
+    jira.addIssue({ key: 'DUE-1', summary: 'Renew the payment provider contract', status: 'In Progress', duedate: day(-2), updated });
+    jira.addIssue({ key: 'DUE-2', summary: 'Send the release notes', duedate: day(0), updated });
+    jira.addIssue({ key: 'DUE-3', summary: 'Archive the old campaign', status: 'Done', duedate: day(-5), updated });
+    const notifications = () => app.evaluate(() => global.__issuemonNotifications);
+    const before = (await notifications()).length;
+    await page.click('[data-view="tracked"]');
+    await page.fill('#add-input', keys.join(' '));
+    await page.press('#add-input', 'Enter');
+    await until(async () => app.evaluate(() => global.__issuemon.tracker.data.tracked.filter(t => t.key.startsWith('DUE-') && t.issue).length === 3), 'due issues tracked');
+    await page.waitForSelector('.va-row[data-row="DUE-1"] .due-mark');
+    assert.equal(await page.textContent('.va-row[data-row="DUE-1"] .due-mark.overdue'), 'Overdue');
+    assert.equal(await page.textContent('.va-row[data-row="DUE-2"] .due-mark.today'), 'Due today');
+    // The date in the system's English locale ("16 Oct" or "Oct 16"), followed by how far away it is
+    const due = (offset, rest = '') => {
+      const d = new Date(Date.now() + offset * 86_400_000);
+      const month = d.toLocaleDateString('en-GB', { month: 'short' });
+      return new RegExp(`^(${d.getDate()} ${month}|${month} ${d.getDate()})(,? ${d.getFullYear()})?${rest}$`);
+    };
+    if (!(await page.locator('.va-row[data-row="DUE-3"]').count())) await page.click('.va-group-toggle'); // the Done group
+    await page.click('.va-row[data-row="DUE-3"]');
+    await page.waitForSelector('.va-row.sel[data-row="DUE-3"]');
+    assert.equal(await page.locator('.va-row[data-row="DUE-3"] .due-mark').count(), 0); // done: no marker
+    await page.waitForSelector('.va-d .meta .meta-due');
+    assert.match(await page.textContent('.va-d .meta .meta-due'), due(-5)); // the date, not how late it is
+
+    await page.click('.va-row[data-row="DUE-1"]');
+    await page.waitForSelector('.va-row.sel[data-row="DUE-1"]');
+    await page.waitForSelector('.va-d .meta .meta-due');
+    assert.match(await page.textContent('.va-d .meta .meta-due'), due(-2, ' · 2 days overdue'));
+    await shot('23-due-overdue');
+    await page.click('.va-row[data-row="DUE-2"]');
+    await page.waitForSelector('.va-row.sel[data-row="DUE-2"]');
+    await page.waitForSelector('.va-d .meta .meta-due');
+    assert.match(await page.textContent('.va-d .meta .meta-due'), due(0, ' · today'));
+
+    // Being overdue is only a marker: no change, no notification
+    await checkNow();
+    assert.equal((await notifications()).length, before);
+    assert.equal(await page.locator('.va-row.unread[data-row^="DUE-"]').count(), 0);
+
+    // A due date moved in Jira is a change, once, and the marker follows the new date
+    jira.change('DUE-1', { field: 'duedate', from: day(-2), to: day(3), author: jira.people.alex });
+    await checkNow();
+    await until(async () => (await notifications()).length > before, 'due date notification');
+    await checkNow();
+    assert.deepEqual((await notifications()).slice(before).map(n => n.key), ['DUE-1']);
+    await page.click('[data-view="changed"]');
+    await page.waitForSelector('.va-row.unread[data-row="DUE-1"]');
+    assert.equal(await page.locator('.va-row[data-row="DUE-1"]').count(), 1);
+    assert.equal(await page.locator('.va-row[data-row="DUE-1"] .chip').count(), 1);
+    assert.equal(await page.locator('.va-row[data-row="DUE-1"] .due-mark').count(), 0);
+    await page.click('.va-row[data-row="DUE-1"]');
+    await page.waitForSelector('.va-row.sel[data-row="DUE-1"]');
+    await page.waitForSelector('.va-d .meta .meta-due');
+    assert.match(await page.textContent('.va-d .meta .meta-due'), due(3, ' · in 3 days'));
+    await page.click('.va-d [data-action="mark"]');
+    await page.waitForSelector('.va-row[data-row="DUE-1"]', { state: 'detached' });
   });
 
   await t.test('updates: a newer release is announced, Later hides it, and up to date again', async () => {
