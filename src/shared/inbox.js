@@ -82,7 +82,7 @@
     const counts = {
       changed: changed.length,
       tracked: tracked.length,
-      stale: allStale.length, // total, regardless of the person filter
+      stale: staleIssues.length, // what the list shows: after the person filter, so everyone without one
       notes: (state.notes || []).filter(n => !n.done).length,
     };
 

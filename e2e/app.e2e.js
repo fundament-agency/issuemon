@@ -813,9 +813,10 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await until(async () => (await rows()).join() === 'WEB-1150', 'filter on Sam');
     assert.match(await page.textContent('.va-hint'), /1 issue assigned to Sam Rivera/);
     assert.match(await page.textContent('#stale-menu'), /Sam/);
-    await staleCount(4); // the sidebar counts all stale issues, even when the list is filtered to one person
+    await staleCount(1); // the sidebar counts what the filtered list shows
     await page.click('.fitem[data-id="acc-alex"]'); // the menu stays open to tick more people
     await until(async () => (await rows()).join() === 'WEB-1150,APP-61', 'filter on Sam and Alex');
+    await staleCount(2);
     assert.match(await page.textContent('.va-hint'), /2 issues assigned to Alex Morgan and Sam Rivera/);
     await shot('10-stale-filter');
     await page.click('.fitem[data-id="acc-me"]'); // everyone chosen = no filter
@@ -832,6 +833,7 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await page.click('#stale-menu');
     await page.click('#sf-all');
     await until(async () => (await rows()).length === 4, 'everyone');
+    await staleCount(4); // no filter: all stale issues
     assert.ok(!(await menuOpen())); // Everyone is a reset and closes the menu
   });
 
@@ -863,13 +865,14 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await shot('16-stale-unassigned');
     await page.click('.fitem[data-id="acc-sam"]');
     await until(async () => (await rows()).join() === 'WEB-1150,WEB-1312', 'filter on Sam and Unassigned');
+    await staleCount(2);
     assert.match(await page.textContent('.va-hint'), /2 issues assigned to Sam Rivera or unassigned/);
     await page.keyboard.press('Escape');
 
     // Unticked again: the issues go, and the group no longer counts in the filter
     await page.click('[data-view="settings"]');
     await page.click('.pchip-x[data-id="unassigned"]'); // via its chip
-    await staleCount(4);
+    await staleCount(1); // the filter keeps only Sam
     await until(async () => !(await page.isChecked('#person-unassigned')), 'Unassigned unticked');
     await page.click('[data-view="stale"]');
     await until(async () => (await rows()).join() === 'WEB-1150', 'only Sam left in the filter');

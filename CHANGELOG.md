@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- The count next to *Stale* in the sidebar follows the person filter on the Stale page: with only Sam chosen it shows Sam's stale issues, with nothing chosen all of them (#49).
+
 ## [0.3.1] - 2026-10-17
 
 ### Fixed
