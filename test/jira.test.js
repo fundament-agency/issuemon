@@ -92,6 +92,17 @@ test('Jira client against the mock Jira', async t => {
     assert.ok(req.body.fields.includes('updated'));
   });
 
+  await t.test('bulkFetch reads the due date, and a duedate change updates it', async () => {
+    jira.addIssue({ key: 'WEB-2', summary: 'Two', duedate: '2026-10-16' });
+    assert.equal((await client.bulkFetch(['WEB-2'])).issues[0].due, '2026-10-16');
+    assert.ok(jira.requests.at(-1).body.fields.includes('duedate'));
+    jira.change('WEB-2', { field: 'duedate', from: '2026-10-16', to: '2026-10-30' });
+    assert.equal((await client.bulkFetch(['WEB-2'])).issues[0].due, '2026-10-30');
+    jira.change('WEB-2', { field: 'duedate', from: '2026-10-30', to: null });
+    assert.equal((await client.bulkFetch(['WEB-2'])).issues[0].due, null);
+    assert.equal((await client.bulkFetch(['WEB-1'])).issues[0].due, null);
+  });
+
   await t.test('bulkFetch throws on a 200 without a list of issues, as a transient error', async () => {
     for (const body of [{}, '', null, { issues: {} }]) {
       jira.bulkfetchBody = body;
