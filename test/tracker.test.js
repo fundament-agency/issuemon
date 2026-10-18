@@ -1201,6 +1201,28 @@ test('issue from a note with its own title, project and type', async t => {
   assert.ok(tracker.find('WEB-2'));
 });
 
+test('issue from a note with an assignee and a description', async t => {
+  const { jira, tracker } = await setup(t);
+  jira.addIssue({ key: 'WEB-1', summary: 'Existing' });
+  const note = tracker.addNote('Cookie banner covers the footer');
+  const r = await tracker.createIssueFromNote(note.id, { project: 'WEB', assignee: 'acc-alex', description: 'Only on mobile.\nSafari too.' });
+  assert.deepEqual(r, { ok: true, key: 'WEB-2', tracked: true });
+  const post = jira.requests.filter(q => q.method === 'POST' && q.path === '/rest/api/3/issue').at(-1);
+  assert.deepEqual(post.body.fields.assignee, { accountId: 'acc-alex' });
+  assert.deepEqual(post.body.fields.description.content.map(p => p.content[0].text), ['Only on mobile.', 'Safari too.']);
+  assert.equal(tracker.find('WEB-2').issue.assignee.name, 'Alex Morgan');
+});
+
+test('issue from a note: an assignee Jira doesn\'t know gives an error, the note stays', async t => {
+  const { jira, tracker } = await setup(t);
+  jira.addIssue({ key: 'WEB-1', summary: 'Existing' });
+  const note = tracker.addNote('Something');
+  const r = await tracker.createIssueFromNote(note.id, { project: 'WEB', assignee: 'acc-gone' });
+  assert.equal(r.ok, false);
+  assert.match(r.error, /acc-gone/);
+  assert.ok(tracker.findNote(note.id));
+});
+
 test('issue from a note with an empty title: error, the note stays', async t => {
   const { jira, tracker } = await setup(t);
   const note = tracker.addNote('Something');

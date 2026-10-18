@@ -344,7 +344,7 @@
   'stale.trackToo': 'Track too',
 
   // Notes page. {button} and {settings} are HTML
-  'notes.hint': 'With {button} you choose the title, project and type; the issue goes into the backlog and is then tracked automatically.',
+  'notes.hint': 'With {button} you choose the title, project, type, assignee and description; the issue goes into the backlog and is then tracked automatically.',
   'notes.noProject': 'Set a project in {settings} to turn a note into an issue.',
   'notes.placeholder': 'New note, Enter to save',
   'notes.empty': 'No notes yet.',

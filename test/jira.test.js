@@ -203,6 +203,30 @@ test('Jira client against the mock Jira', async t => {
     assert.equal(jira.requests.at(-1).body.fields.issuetype.id, '10002');
   });
 
+  await t.test('createIssue: assignee by account id, description as ADF paragraphs', async () => {
+    const created = await client.createIssue({ project: 'OPS', summary: 'With context', assigneeId: 'acc-sam', description: '  First line\r\n\n  Second line  \n' });
+    assert.deepEqual(jira.requests.at(-1).body, { fields: {
+      project: { key: 'OPS' }, issuetype: { id: '10002' }, summary: 'With context',
+      assignee: { accountId: 'acc-sam' },
+      description: { type: 'doc', version: 1, content: [
+        { type: 'paragraph', content: [{ type: 'text', text: 'First line' }] },
+        { type: 'paragraph', content: [{ type: 'text', text: 'Second line' }] },
+      ] },
+    } });
+    const issue = jira.issues.get(created.key);
+    assert.equal(issue.fields.assignee.accountId, 'acc-sam');
+    assert.equal(issue.fields.assignee.displayName, 'Sam Rivera');
+    assert.deepEqual(issue.fields.description.content.map(p => p.content[0].text), ['First line', 'Second line']);
+    // Neither field is sent when empty: Jira then leaves the issue unassigned (or applies the project's default) and without a description.
+    await client.createIssue({ project: 'OPS', summary: 'Bare', assigneeId: '', description: ' \n ' });
+    assert.deepEqual(Object.keys(jira.requests.at(-1).body.fields), ['project', 'issuetype', 'summary']);
+  });
+
+  await t.test('createIssue: an unknown account id is rejected like Jira does', async () => {
+    await assert.rejects(client.createIssue({ project: 'OPS', summary: 'x', assigneeId: 'acc-nobody' }), err => err.status === 400
+      && /^Jira rejected the request \(400, POST \/rest\/api\/3\/issue\): .*acc-nobody/.test(err.message));
+  });
+
   await t.test('createIssue: unknown project gives a readable error', async () => {
     await assert.rejects(client.createIssue({ project: 'NOPE', summary: 'x' }), err =>
       err.code === 'not_found' && err.message === 'Project NOPE does not exist, or you may not create issues in it.');

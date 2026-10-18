@@ -556,7 +556,7 @@ test('IssueMon end-to-end', { timeout: 180_000 }, async t => {
     await page.click('[data-view="notes"]');
     await page.waitForSelector('#note-input:focus');
     assert.equal(await page.textContent('.va-page h1'), 'Notes');
-    assert.match(await page.textContent('.va-notes .va-hint'), /choose the title, project and type; the issue goes into the backlog/);
+    assert.match(await page.textContent('.va-notes .va-hint'), /choose the title, project, type, assignee and description; the issue goes into the backlog/);
     await page.fill('#note-input', 'Cookie banner covers the footer');
     await page.press('#note-input', 'Enter');
     await page.waitForSelector('.note');

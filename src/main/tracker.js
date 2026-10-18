@@ -851,8 +851,9 @@ class Tracker extends EventEmitter {
   /**
    * Turns a note into an issue in the backlog and tracks that issue. The note disappears.
    * `summary`, `project` and `typeId` override the note text, the notes project and the default type.
+   * `assignee` (an account id; none = unassigned) and `description` (plain text) are optional.
    */
-  async createIssueFromNote(id, { summary, project, typeId } = {}) {
+  async createIssueFromNote(id, { summary, project, typeId, assignee, description } = {}) {
     const note = this.findNote(id);
     if (!note) return { ok: false, error: this.t('error.noteGone') };
     if (note.creating) return { ok: false, error: this.t('error.issueCreating') };
@@ -868,7 +869,10 @@ class Tracker extends EventEmitter {
     this.changed();
     let created;
     try {
-      created = await client.createIssue({ project: key, summary: title, typeId: typeId ? String(typeId) : undefined });
+      created = await client.createIssue({
+        project: key, summary: title, typeId: typeId ? String(typeId) : undefined,
+        assigneeId: assignee ? String(assignee) : undefined, description: typeof description === 'string' ? description : undefined,
+      });
     } catch (err) {
       return { ok: false, error: err.message };
     } finally {
