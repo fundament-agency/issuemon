@@ -903,7 +903,7 @@
     const busy = UI.conn === 'busy';
     let body;
     if (done) {
-      const n = S.stale.issues.length; // total, as in the sidebar
+      const n = S.stale.issues.length; // total, regardless of the person filter
       body = `<h1>${icon('check', 'ok')} ${esc(S.me ? t('status.connectedAs', { name: S.me.name || t('person.unknown') }) : UI.conn.message)}</h1>
         <p class="va-hint">${esc(t('connect.connected'))}</p>
         <div class="next">

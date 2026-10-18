@@ -267,7 +267,7 @@ test('stale: with the setting off, Unassigned in the filter is ignored like an u
 
 /* ---------- counts ---------- */
 
-test('counts: stale is the total regardless of the filter, notes without ticked-off ones', () => {
+test('counts: stale follows the person filter, notes without ticked-off ones', () => {
   const issues = [staleIssue('S-1', 100, ME), staleIssue('S-2', 200, SAM), staleIssue('S-3', 300, SAM)];
   const notes = [{ id: 1, done: false }, { id: 2, done: true }, { id: 3 }];
   const s = state({
@@ -275,8 +275,9 @@ test('counts: stale is the total regardless of the filter, notes without ticked-
     stale: { issues }, notes, settings: { stalePeople: [ME, SAM], staleSort: 'oldest' },
   });
   const c = compute(s, ui({ staleFilter: ['sam'] }));
-  assert.deepEqual(c.counts, { changed: 1, tracked: 3, stale: 3, notes: 2 });
+  assert.deepEqual(c.counts, { changed: 1, tracked: 3, stale: 2, notes: 2 });
   assert.equal(c.stale.issues.length, 2);
+  assert.equal(compute(s, ui({ staleFilter: [] })).counts.stale, 3); // no filter: everyone
 });
 
 /* ---------- keys and shown ---------- */
