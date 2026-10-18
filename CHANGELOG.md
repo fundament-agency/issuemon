@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Tracked issues show their due date in the detail, with *in 3 days*, *today* or *2 days overdue*, and the row of an unfinished issue gets an *Overdue* or *Due today* marker. Becoming overdue is only a marker, not a change or a notification (#24).
+
 ### Changed
 
 - The counts per person and for *Unassigned* in the Stale filter menu are now part of the shared list rules and specified in the README; they count all fetched stale issues, whatever the filter (#29).
