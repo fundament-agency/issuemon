@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-18
+
 ### Changed
 
 - The count next to *Stale* in the sidebar follows the person filter on the Stale page: with only Sam chosen it shows Sam's stale issues, with nothing chosen all of them (#49).
@@ -96,7 +98,8 @@ The first public release.
 
 - The data and token migrations from pre-release versions.
 
-[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/fundament-agency/issuemon/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/fundament-agency/issuemon/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/fundament-agency/issuemon/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/fundament-agency/issuemon/compare/v0.1.3...v0.2.0
