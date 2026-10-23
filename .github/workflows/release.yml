@@ -98,7 +98,7 @@ jobs:
         env:
           ISSUEMON_APP: dist/mac-arm64/IssueMon.app/Contents/MacOS/IssueMon
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: issuemon-linux
           path: dist
