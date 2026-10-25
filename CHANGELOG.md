@@ -6,9 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-25
+
 ### Added
 
 - Tracked issues show their due date in the detail, with *in 3 days*, *today* or *2 days overdue*, and the row of an unfinished issue gets an *Overdue* or *Due today* marker. Becoming overdue is only a marker, not a change or a notification (#24).
+- *Create issue* on a note lets you choose an assignee, from the same people list as Stale and *Unassigned* by default, and add an optional description of a few lines. Without a project the panel says so in a neutral hint that turns red only after *Create* (#34).
 
 ### Changed
 
@@ -106,7 +109,8 @@ The first public release.
 
 - The data and token migrations from pre-release versions.
 
-[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/fundament-agency/issuemon/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/fundament-agency/issuemon/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/fundament-agency/issuemon/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/fundament-agency/issuemon/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/fundament-agency/issuemon/compare/v0.2.0...v0.3.0
