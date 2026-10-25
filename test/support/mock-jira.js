@@ -107,9 +107,17 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     if (!summary.trim()) errors.summary = 'You must specify a summary of the issue.';
     else if (/[\r\n]/.test(summary)) errors.summary = 'The summary is invalid because it contains newline characters.';
     else if (summary.length > 255) errors.summary = 'Summary must be less than 255 characters.';
+    // Only someone who is on the site and may be assigned: Jira refuses an unknown account id, an app or a deactivated account.
+    const assigneeId = fields.assignee?.accountId;
+    const assignee = assigneeId == null ? null : mock.users.find(u => u.accountId === assigneeId && u.accountType === 'atlassian' && u.active);
+    if (assigneeId != null && !assignee) errors.assignee = `User '${assigneeId}' cannot be assigned issues.`;
     if (Object.keys(errors).length) return { errors };
     const last = Math.max(0, ...[...issues.keys()].filter(k => k.startsWith(`${project}-`)).map(k => Number(k.split('-')[1])));
-    return { issue: addIssue({ key: `${project}-${last + 1}`, summary, type: type.name, project }) };
+    return { issue: addIssue({
+      key: `${project}-${last + 1}`, summary, type: type.name, project,
+      assignee: assignee && { accountId: assignee.accountId, displayName: assignee.displayName },
+      description: fields.description ?? '', // ADF as sent; toApi returns it unchanged
+    }) };
   }
 
   const get = key => {

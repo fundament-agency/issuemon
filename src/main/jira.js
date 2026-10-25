@@ -207,17 +207,30 @@ function createJiraClient({ baseUrl, email, token, userAgent = 'IssueMon', fetch
     /**
      * New issue in `project` (key), without a sprint: it lands in the backlog. Returns { id, key }.
      * `typeId` must be a plain type of the project; otherwise (or without one) pickIssueType chooses the type.
+     * `assigneeId` (an account id) and `description` (plain text, one paragraph per line) are left out when empty.
      */
-    async createIssue({ project, summary, typeId }) {
+    async createIssue({ project, summary, typeId, assigneeId, description }) {
       const plain = await plainIssueTypes(project);
       const type = plain.find(t => typeId != null && String(t.id) === String(typeId)) || pickIssueType(plain);
       if (!type) throw new JiraError(t('error.jira.noIssueType', { project }), { code: 'config' });
+      const doc = paragraphs(description);
       const res = await request('POST', '/rest/api/3/issue', {
-        body: { fields: { project: { key: project }, issuetype: { id: type.id }, summary } },
+        body: { fields: {
+          project: { key: project }, issuetype: { id: type.id }, summary,
+          ...(assigneeId && { assignee: { accountId: String(assigneeId) } }),
+          ...(doc && { description: doc }),
+        } },
       });
       return { id: String(res.id), key: res.key };
     },
   };
+}
+
+/** Plain text as an ADF document with one paragraph per non-empty line; null when there is no text. */
+function paragraphs(text) {
+  const lines = String(text ?? '').split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+  if (!lines.length) return null;
+  return { type: 'doc', version: 1, content: lines.map(line => ({ type: 'paragraph', content: [{ type: 'text', text: line }] })) };
 }
 
 module.exports = { createJiraClient, normalizeBaseUrl, pickIssueType, JiraError };

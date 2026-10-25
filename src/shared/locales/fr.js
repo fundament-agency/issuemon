@@ -341,7 +341,7 @@
   'stale.trackToo': 'Suivre aussi',
 
   // Notes page
-  'notes.hint': 'Avec {button}, vous choisissez le titre, le projet et le type ; le ticket va dans le backlog, puis il est suivi automatiquement.',
+  'notes.hint': 'Avec {button}, vous choisissez le titre, le projet, le type, le responsable et la description ; le ticket va dans le backlog, puis il est suivi automatiquement.',
   'notes.noProject': 'Définissez un projet dans les {settings} pour transformer une note en ticket.',
   'notes.placeholder': 'Nouvelle note, Entrée pour enregistrer',
   'notes.empty': 'Aucune note pour l’instant.',
