@@ -50,7 +50,7 @@
    * @param {object} state publicState() from main: tracked, stale, notes, settings, me
    * @param {object} ui    view, trackedQuery, doneOpen, staleFilter
    * @param {{ locale?: string }} options locale: BCP 47 tag for sorting people
-   * @returns {object} changed, tracked { active, done, query, filterShown, doneOpen }, stale { issues, people, unassigned, filter, sort },
+   * @returns {object} changed, tracked { active, done, query, filterShown, doneOpen }, stale { issues, people, unassigned, filter, counts, sort },
    *                   counts, keys, and shown(key)
    */
   function compute(state, ui, { locale } = {}) {
@@ -78,6 +78,9 @@
     const dir = state.settings?.staleSort === 'oldest' ? 1 : -1; // sorted here, so flipping the order takes effect immediately
     const staleIssues = [...(filter.length ? allStale.filter(i => filter.includes(groupOf(i))) : allStale)]
       .sort((a, b) => dir * (a.updated - b.updated));
+    // Stale issues per group, of everything fetched rather than the filtered list: the filter menu shows them next to each group.
+    const groupCounts = Object.fromEntries([...people.map(p => p.accountId), ...(unassigned ? [UNASSIGNED] : [])].map(id => [id, 0]));
+    for (const i of allStale) if (groupOf(i) in groupCounts) groupCounts[groupOf(i)]++;
 
     const counts = {
       changed: changed.length,
@@ -98,7 +101,7 @@
     return {
       changed,
       tracked: { active, done, query, filterShown, doneOpen },
-      stale: { issues: staleIssues, people, unassigned, filter, sort: state.settings?.staleSort },
+      stale: { issues: staleIssues, people, unassigned, filter, counts: groupCounts, sort: state.settings?.staleSort },
       counts,
       keys,
       shown,

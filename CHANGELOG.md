@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Changed
+
+- The counts per person and for *Unassigned* in the Stale filter menu are now part of the shared list rules and specified in the README; they count all fetched stale issues, whatever the filter (#29).
+
 ## [0.4.0] - 2026-10-18
 
 ### Changed

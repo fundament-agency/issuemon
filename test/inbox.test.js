@@ -256,6 +256,18 @@ test('stale: Unassigned is a group of its own once the setting is on', () => {
   assert.deepEqual(keysOf(both.stale.issues), ['S-2', 'S-3']);
 });
 
+test('stale: counts per person and for Unassigned, independent of the filter', () => {
+  const issues = [staleIssue('S-1', 100, ME), staleIssue('S-2', 200, SAM), staleIssue('S-3', 300, SAM), staleIssue('S-4', 400, null)];
+  const settings = { stalePeople: [ME, SAM, ASA], staleUnassigned: true, staleSort: 'oldest' };
+  const expected = { me: 1, sam: 2, asa: 0, [UNASSIGNED]: 1 };
+  assert.deepEqual(compute(state({ stale: { issues }, settings }), ui()).stale.counts, expected);
+  assert.deepEqual(compute(state({ stale: { issues }, settings }), ui({ staleFilter: ['sam'] })).stale.counts, expected);
+  assert.deepEqual(compute(state({ stale: { issues }, settings }), ui({ staleFilter: [UNASSIGNED] })).stale.counts, expected);
+  // Without the Unassigned setting there is no such group to count.
+  const off = compute(state({ stale: { issues }, settings: { ...settings, staleUnassigned: false } }), ui());
+  assert.deepEqual(off.stale.counts, { me: 1, sam: 2, asa: 0 });
+});
+
 test('stale: with the setting off, Unassigned in the filter is ignored like an unticked person', () => {
   const issues = [staleIssue('S-1', 100, ME), staleIssue('S-2', 200, SAM), staleIssue('S-3', 300, null)];
   const settings = { stalePeople: [ME, SAM], staleSort: 'oldest' };
