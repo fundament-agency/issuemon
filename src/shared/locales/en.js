@@ -250,6 +250,9 @@
   'row.comments': { one: '{n} comment', other: '{n} comments' },
   'row.commentsEdited': { one: '{n} comment edited', other: '{n} comments edited' },
   'row.loading': 'loading…',
+  // Due-date markers on a tracked, unfinished issue's row
+  'row.overdue': 'Overdue',
+  'row.dueToday': 'Due today',
   'row.notFetched': 'Not fetched yet',
   'row.untrackLabel': 'Stop tracking {key}',
 
@@ -276,6 +279,11 @@
   'detail.track': 'Track',
   'detail.lastUpdated': 'Last updated',
   'detail.noPriority': 'None',
+  // The due date in the detail, then how far away it is
+  'detail.due': 'Due',
+  'detail.dueIn': { one: 'in {n} day', other: 'in {n} days' },
+  'detail.dueToday': 'today',
+  'detail.overdue': { one: '{n} day overdue', other: '{n} days overdue' },
   'detail.priorityTitle': 'Priority: {priority}',
   'detail.priorityNone': 'none',
   'detail.more': 'More',

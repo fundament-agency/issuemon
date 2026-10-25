@@ -14,7 +14,7 @@ function parseJiraDate(value) {
 const user = u => (u ? { accountId: u.accountId || null, name: u.displayName || null } : null);
 
 /** Fields we fetch per issue (bulkFetch adds the description). */
-const ISSUE_FIELDS = ['summary', 'status', 'assignee', 'priority', 'issuetype', 'updated', 'labels', 'fixVersions', 'project', 'parent', 'subtasks', 'issuelinks'];
+const ISSUE_FIELDS = ['summary', 'status', 'assignee', 'priority', 'issuetype', 'updated', 'labels', 'fixVersions', 'project', 'parent', 'subtasks', 'issuelinks', 'duedate'];
 
 /** The description is kept in storage; more than this is not needed for an overview. */
 const DESCRIPTION_MAX = 2000;
@@ -58,6 +58,7 @@ function normalizeIssue(raw) {
     project: f.project?.name || null,
     projectKey: f.project?.key || null,
     description: truncate(adfToText(f.description), DESCRIPTION_MAX),
+    due: typeof f.duedate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(f.duedate) ? f.duedate : null, // Jira's due date is a day, YYYY-MM-DD
   };
 }
 

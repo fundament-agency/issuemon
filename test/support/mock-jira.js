@@ -80,12 +80,12 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
   let seq = 10_000;
   let server = null;
 
-  function addIssue({ key, summary, status = 'To Do', type = 'Task', priority = 'Medium', assignee = null, updated = now(), labels = [], fixVersions = [], parent = null, subtasks = [], issuelinks = [], project, description = '' }) {
+  function addIssue({ key, summary, status = 'To Do', type = 'Task', priority = 'Medium', assignee = null, updated = now(), labels = [], fixVersions = [], parent = null, subtasks = [], issuelinks = [], project, description = '', duedate = null }) {
     const issue = {
       id: String(++seq),
       key,
       fields: {
-        summary, status, type, priority, assignee, updated, labels, description, fixVersions, parent, subtasks, issuelinks,
+        summary, status, type, priority, assignee, updated, labels, description, fixVersions, parent, subtasks, issuelinks, duedate,
         project: project || key.split('-')[0],
       },
       changelog: [],
@@ -136,6 +136,7 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
     if (field === 'assignee') f.assignee = Object.values(people).find(p => p.displayName === to) || null;
     if (field === 'labels') f.labels = to ? to.split(' ') : [];
     if (field === 'fixVersion') f.fixVersions = to ? [to] : [];
+    if (field === 'duedate') f.duedate = to ? to.slice(0, 10) : null; // the changelog may write "2026-10-21 00:00:00.0"
     f.updated = at;
     return i;
   }
@@ -203,6 +204,7 @@ function createMockJira({ email = 'demo@example.com', token = 'demo', now = Date
         })),
         description: f.description ? adf(f.description) : null,
         fixVersions: f.fixVersions.map(name => ({ name })),
+        duedate: f.duedate, // a day, YYYY-MM-DD, or null
         project: { key: i.key.split('-')[0], name: f.project },
       },
     };

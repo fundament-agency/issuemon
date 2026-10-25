@@ -27,13 +27,24 @@ test('normalizeIssue makes a flat issue', () => {
       labels: ['x'],
       fixVersions: [{ name: '2026.10' }],
       project: { key: 'WEB', name: 'Website' },
+      duedate: '2026-10-21',
     },
   });
   assert.deepEqual(i, {
     id: '10001', key: 'WEB-1', summary: 'Title', status: 'In Progress', statusCat: 'indeterminate', type: 'Bug', subtask: false,
     priority: 'High', assignee: { accountId: 'a1', name: 'Sam Rivera' }, updated: Date.UTC(2026, 9, 9, 10), labels: ['x'],
-    fixVersions: ['2026.10'], parent: null, subtasks: [], links: [], project: 'Website', projectKey: 'WEB', description: '',
+    fixVersions: ['2026.10'], parent: null, subtasks: [], links: [], project: 'Website', projectKey: 'WEB', description: '', due: '2026-10-21',
   });
+});
+
+test('normalizeIssue reads the due date as YYYY-MM-DD, or null', () => {
+  assert.ok(ISSUE_FIELDS.includes('duedate'));
+  const due = duedate => normalizeIssue({ id: 1, key: 'WEB-1', fields: { duedate } }).due;
+  assert.equal(due('2026-10-21'), '2026-10-21');
+  assert.equal(due(null), null);
+  assert.equal(due(undefined), null);
+  assert.equal(due('2026-10-21T00:00:00.000+0000'), null);
+  assert.equal(due(20261021), null);
 });
 
 test('normalizeIssue reads standard relations, directional links and partial data', () => {

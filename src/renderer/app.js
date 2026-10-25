@@ -12,7 +12,7 @@
   const { UNASSIGNED, compute, settle, neighbour, pending, isChanged, isDone, fold, sortPeople } = window.IssuemonInbox;
   const { initials } = window.IssuemonText;
   const { clip, firstName, assignedToMe, fieldInSentence, shortLine, chip } = window.IssuemonChange;
-  const { NOTE_MAX, INTERVALS, THEMES, noteText, projectKey, notesProjectOf, isConfigured, defaultIssueType } = window.IssuemonRules;
+  const { NOTE_MAX, INTERVALS, THEMES, noteText, projectKey, notesProjectOf, isConfigured, defaultIssueType, localDay, daysUntilDue, dueMarker } = window.IssuemonRules;
   const { LANGUAGES, LANGUAGE_NAMES, LANGUAGE_SETTINGS, createTranslator, resolveLanguage } = window.IssuemonI18n;
   document.documentElement.classList.add(`platform-${api.platform}`);
   const MAC = api.platform === 'darwin';
@@ -71,6 +71,8 @@
     return t('time.short.days', { n: Math.floor(d / DAY) });
   }
   const fmtDate = ts => new Date(ts).toLocaleDateString(t.locale, { day: 'numeric', month: 'short', ...(new Date(ts).getFullYear() !== new Date().getFullYear() && { year: 'numeric' }) });
+  /** A due date (YYYY-MM-DD, a calendar day) as a local date: "16 Oct", with the year when it is not this year. */
+  const fmtDay = day => { const [y, m, d] = day.split('-').map(Number); return fmtDate(new Date(y, m - 1, d).getTime()); };
   const fmtTime = ts => new Date(ts).toLocaleString(t.locale, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 
   const ICONS = {
@@ -264,14 +266,29 @@
       return `<li class="tl-i ${c.processed ? 'done' : ''}">${authorAvatar(c.author)}<div class="tl-b"><div class="tl-h"><span>${head}${own}</span><time title="${fmtTime(c.at)}">${rel(c.at)}</time></div>${body}</div></li>`;
     }).join('')}</ol>`;
   }
-  /** `updated: false` leaves out "Last updated", for panes that already show the age elsewhere. */
-  function metaGrid(i, { updated = true } = {}) {
+  /** The due date, and for an unfinished issue how far away it is: "in 3 days", "today" or "2 days overdue". */
+  function dueHtml(i) {
+    const days = daysUntilDue(i.due, localDay());
+    if (days == null) return '';
+    const when = i.statusCat === 'done' ? ''
+      : days > 0 ? t('detail.dueIn', { n: days }) : days === 0 ? t('detail.dueToday') : t('detail.overdue', { n: -days });
+    const cls = dueMarker(i, localDay()) || '';
+    return `<div><dt>${esc(t('detail.due'))}</dt><dd class="meta-due ${cls}">${esc(fmtDay(i.due))}${when ? ` · ${esc(when)}` : ''}</dd></div>`;
+  }
+  /** The Overdue or Due today marker on the row of a tracked issue that is not done. */
+  function dueMark(i) {
+    const mark = dueMarker(i, localDay());
+    return mark ? `<span class="due-mark ${mark}">${esc(t(mark === 'overdue' ? 'row.overdue' : 'row.dueToday'))}</span>` : '';
+  }
+  /** `updated: false` leaves out "Last updated", for panes that already show the age elsewhere; `due: false` the due date. */
+  function metaGrid(i, { updated = true, due = true } = {}) {
     return `<dl class="meta">
       <div><dt>${esc(t('field.status'))}</dt><dd>${issuePill(i)}</dd></div>
       <div><dt>${esc(t('field.assignee'))}</dt><dd>${person(i.assignee)}</dd></div>
       <div><dt>${esc(t('field.priority'))}</dt><dd>${prio(i.priority)}<span>${esc(i.priority || t('detail.noPriority'))}</span></dd></div>
       ${(i.labels || []).length ? `<div><dt>${esc(t('field.labels'))}</dt><dd class="meta-labels">${i.labels.map(label => `<span class="chip">${esc(label)}</span>`).join('')}</dd></div>` : ''}
       ${(i.fixVersions || []).length ? `<div><dt>${esc(t('field.fixVersion'))}</dt><dd class="meta-versions">${esc(i.fixVersions.join(', '))}</dd></div>` : ''}
+      ${due ? dueHtml(i) : ''}
       ${updated ? `<div><dt>${esc(t('detail.lastUpdated'))}</dt><dd><span title="${i.updated ? fmtTime(i.updated) : ''}">${rel(i.updated)}</span></dd></div>` : ''}
     </dl>`;
   }
@@ -537,7 +554,7 @@
     return `<div class="va-row ${sel} ${p.length ? 'unread' : ''} ${p.some(toMe) ? 'mine' : ''} ${hl}" data-action="select" data-key="${esc(key)}" data-row="${esc(key)}" tabindex="0">
       <span class="va-dot"></span>
       <div class="va-row-main">
-        <div class="va-row-top">${typeIcon(i)}<span class="key">${esc(key)}</span>${issuePill(i)}<span class="va-time">${p.length ? relShort(newestAt(p)) : ''}</span></div>
+        <div class="va-row-top">${typeIcon(i)}<span class="key">${esc(key)}</span>${issuePill(i)}${dueMark(i)}<span class="va-time">${p.length ? relShort(newestAt(p)) : ''}</span></div>
         <div class="va-row-sum">${esc(i.summary)}</div>
         ${p.length ? `<div class="chips">${changeChips(p)}</div>` : quietSub(tr)}
       </div>
@@ -671,7 +688,7 @@
       <div class="va-d-top">${typeIcon(i)}<span class="key">${esc(key)}</span>${detailTop(i)}</div>
       <h2 class="va-d-title">${esc(i.summary)}</h2>
       <div class="va-stale-hero ${idleCls(d)}"><b>${d}</b><span>${esc(t('stale.idle', { n: d }))}<br><small>${esc(t('stale.since', { date: fmtDate(i.updated) }))}</small></span></div>
-      ${metaGrid(i, { updated: false })}
+      ${metaGrid(i, { updated: false, due: false })}
       <div class="va-d-actions">
         <button class="btn primary" data-action="jira" data-key="${esc(key)}">${icon('external')}${esc(t('detail.openInJira'))}</button>
         ${find(key) ? `<span class="va-done">${icon('eye')}${esc(t('stale.alreadyTracked'))}</span>` : `<button class="btn" data-action="track" data-key="${esc(key)}">${icon('eye')}${esc(t('stale.trackToo'))}</button>`}

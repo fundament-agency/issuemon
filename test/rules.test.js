@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { NOTE_MAX, INTERVALS, THEMES, noteText, projectKey, isConfigured, defaultIssueType } = require('../src/shared/rules');
+const { NOTE_MAX, INTERVALS, THEMES, noteText, projectKey, isConfigured, defaultIssueType, localDay, daysUntilDue, dueMarker } = require('../src/shared/rules');
 
 test('noteText: whitespace and newlines become one space, trimmed', () => {
   assert.equal(noteText('  one\n\n two\t three  '), 'one two three');
@@ -62,4 +62,34 @@ test('defaultIssueType: also the French, German and Spanish name of Task, as a w
 test('INTERVALS and THEMES are the allowed values', () => {
   assert.deepEqual(INTERVALS, [5, 10, 15, 30, 60]);
   assert.deepEqual(THEMES, ['system', 'light', 'dark']);
+});
+
+test('localDay: the local calendar day as YYYY-MM-DD', () => {
+  assert.equal(localDay(new Date(2026, 9, 18, 23, 59)), '2026-10-18');
+  assert.equal(localDay(new Date(2026, 0, 5, 0, 0)), '2026-01-05');
+});
+
+test('daysUntilDue: calendar days from today, negative when overdue, null without a valid date', () => {
+  const today = '2026-10-18';
+  assert.equal(daysUntilDue('2026-10-21', today), 3);
+  assert.equal(daysUntilDue('2026-10-18', today), 0);
+  assert.equal(daysUntilDue('2026-10-16', today), -2);
+  assert.equal(daysUntilDue('2027-01-01', '2026-12-31'), 1); // across a year
+  assert.equal(daysUntilDue('2026-03-30', '2026-03-28'), 2); // across a daylight saving change
+  assert.equal(daysUntilDue(null, today), null);
+  assert.equal(daysUntilDue('', today), null);
+  assert.equal(daysUntilDue('2026-02-31', today), null);
+  assert.equal(daysUntilDue('18-10-2026', today), null);
+});
+
+test('dueMarker: overdue or due today for unfinished issues only', () => {
+  const today = '2026-10-18';
+  assert.equal(dueMarker({ due: '2026-10-17', statusCat: 'indeterminate' }, today), 'overdue');
+  assert.equal(dueMarker({ due: '2026-10-18', statusCat: 'new' }, today), 'today');
+  assert.equal(dueMarker({ due: '2026-10-19', statusCat: 'new' }, today), null); // no "due soon"
+  assert.equal(dueMarker({ due: '2026-10-01', statusCat: 'done' }, today), null);
+  assert.equal(dueMarker({ due: '2026-10-18', statusCat: 'done' }, today), null);
+  assert.equal(dueMarker({ due: null, statusCat: 'new' }, today), null);
+  assert.equal(dueMarker({ statusCat: 'new' }, today), null); // stored before IssueMon knew due dates
+  assert.equal(dueMarker(null, today), null);
 });

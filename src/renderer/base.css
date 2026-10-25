@@ -183,6 +183,13 @@ kbd {
 .idle { font-size: 11.5px; font-weight: 700; line-height: 18px; padding: 0 7px; border-radius: 999px; white-space: nowrap; color: var(--stale); background: var(--stale-soft); }
 .idle.warm { color: var(--changed); background: var(--changed-soft); }
 .idle.hot { color: var(--danger); background: var(--danger-soft); }
+
+/* Due date: a marker on the row of an unfinished tracked issue, and the colour of the date in the detail */
+.due-mark { font-size: 11.5px; font-weight: 700; line-height: 18px; padding: 0 7px; border-radius: 999px; white-space: nowrap; }
+.due-mark.today { color: var(--changed); background: var(--changed-soft); }
+.due-mark.overdue { color: var(--danger); background: var(--danger-soft); }
+.meta-due.today { color: var(--changed); }
+.meta-due.overdue { color: var(--danger); }
 .idle-bar { height: 4px; border-radius: 99px; background: var(--surface-3); overflow: hidden; }
 .idle-bar span { display: block; height: 100%; border-radius: 99px; background: var(--stale); }
 .idle-bar.warm span { background: var(--changed); }
